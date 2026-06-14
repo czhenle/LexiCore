@@ -1,5 +1,8 @@
 # LexiCore 📚
 
+<img width="300" height="300" alt="LexiCore" src="https://github.com/user-attachments/assets/7c7950fa-0cff-4aa1-b025-bc0a5a58071f" />
+
+
 An AI-powered personalised English learning assistant for Malaysian primary school students (Standard 1–6), built with Flutter and Supabase. LexiCore delivers adaptive vocabulary, grammar, reading, and writing exercises generated on-demand by GPT-4o-mini, with a built-in AI tutor, a personalised 4-week study schedule, and a KSSR-aligned curriculum progression system.
 
 ---
