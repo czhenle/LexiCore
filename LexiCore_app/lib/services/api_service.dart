@@ -211,49 +211,4 @@ class ApiService {
     }
   }
 
-  // ── INITIAL ASSESSMENT ───────────────────────────────────────────────────
-  Future<List<dynamic>?> generateAssessment(int standard) async {
-    try {
-      final responses = await Future.wait([
-        generateVocabularyModule(standard, 'Daily Life',     'meaning'),
-        generateVocabularyModule(standard, 'Animals',        'image'),
-        generateGrammarModule(standard, ['Simple Present Tense'], 5),
-        generateGrammarModule(standard, ['Nouns and Pronouns'],   5),
-        generateReadingModule(standard, 'A Short Story'),
-        generateWritingModule(standard, 'Everyday Tasks', 'completion'),
-      ]);
-
-      final List<dynamic> master = [];
-      final types = [
-        'Vocabulary', 'Vocabulary',
-        'Grammar',    'Grammar',
-        'Reading',    'Writing',
-      ];
-
-      for (int i = 0; i < responses.length; i++) {
-        final r = responses[i];
-        if (r == null) continue;
-
-        // Vocab/Reading/Writing return Map with 'questions' key
-        // Grammar returns List directly
-        List<dynamic> questions = [];
-        if (r is Map && r['questions'] != null) {
-          questions = r['questions'] as List<dynamic>;
-        } else if (r is List) {
-          questions = r;
-        }
-
-        for (var q in questions) {
-          q['type'] = types[i];
-          master.add(q);
-        }
-      }
-
-      master.shuffle();
-      return master.isNotEmpty ? master : null;
-    } catch (e) {
-      debugPrint('Assessment error: $e');
-      return null;
-    }
-  }
 }

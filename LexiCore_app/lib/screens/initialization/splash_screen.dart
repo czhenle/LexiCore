@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'landing_screen.dart';
+import '../../services/supabase_service.dart';
+import '../login_and_registration/login_screen.dart';
+import '../user_profiling/onboarding_profile_screen.dart';
+import '../home/home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -40,13 +43,26 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _navigate() async {
-    await Future.delayed(const Duration(milliseconds: 2800));
-    await Supabase.instance.client.auth.signOut();
+    await Future.delayed(const Duration(milliseconds: 1800)); // brand moment
+
+    // No longer signs the user out on every launch — sessions now persist.
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LandingScreen()),
-    );
+
+    // Not logged in -> login screen.
+    if (Supabase.instance.client.auth.currentSession == null) {
+      _replace(const AuthScreen());
+      return;
+    }
+    // Logged in -> Home if already onboarded, else finish onboarding first.
+    final profile = await SupabaseService().getStudentProfile();
+    if (!mounted) return;
+    _replace(profile == null
+        ? const OnboardingProfileScreen()
+        : const HomeScreen());
   }
+
+  void _replace(Widget page) => Navigator.of(context)
+      .pushReplacement(MaterialPageRoute(builder: (_) => page));
 
   @override
   Widget build(BuildContext context) {

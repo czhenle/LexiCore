@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/supabase_service.dart';
-import '../initialization/landing_screen.dart';
+import '../login_and_registration/login_screen.dart';
 
 class UserProfile extends StatefulWidget {
   const UserProfile({super.key});
@@ -326,7 +326,7 @@ class _UserProfileState extends State<UserProfile> {
     await _supabaseService.signOut();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LandingScreen()),
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
         (_) => false,
       );
     }

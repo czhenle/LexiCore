@@ -70,6 +70,7 @@ class _RegistrationScreenState extends State<RegistrationScreen>
       final response = await _supabaseService.signUp(
         _emailCtrl.text.trim(),
         _passwordCtrl.text,
+        username: _usernameCtrl.text.trim(),
       );
 
       if (response.user != null && mounted) {

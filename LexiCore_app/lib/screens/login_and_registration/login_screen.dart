@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/supabase_service.dart';
 import 'registration_screen.dart';
 import '../home/home_screen.dart';
+import '../user_profiling/onboarding_profile_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -66,8 +67,14 @@ class _AuthScreenState extends State<AuthScreen>
         _passwordCtrl.text,
       );
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const HomeScreen()));
+        // Route by onboarding state so a registered-but-not-onboarded user
+        // finishes their profile instead of landing on an empty Home.
+        final profile = await _supabaseService.getStudentProfile();
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+            builder: (_) => profile == null
+                ? const OnboardingProfileScreen()
+                : const HomeScreen()));
       }
     } on AuthException catch (e) {
       setState(() => _errorMessage = e.message);
@@ -131,18 +138,20 @@ class _AuthScreenState extends State<AuthScreen>
   Widget _buildTopBar() {
     return Row(
       children: [
-        // Back Button
-        GestureDetector(
-          onTap: () => Navigator.pop(context),
-          child: Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.3),
-              shape: BoxShape.circle,
+        // Back button only shows when there's a screen to return to
+        // (e.g. arriving from Registration). Hidden when login is the entry.
+        if (Navigator.canPop(context))
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            child: Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.arrow_back_ios_new_rounded, color: _navyText, size: 18),
             ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, color: _navyText, size: 18),
           ),
-        ),
       ],
     );
   }

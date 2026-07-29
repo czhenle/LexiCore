@@ -3,9 +3,9 @@ import '../../services/supabase_service.dart';
 import 'initial_assessment_screen.dart';
 
 class OnboardingProfileScreen extends StatefulWidget {
-  final String username;
+  final String? username;
 
-  const OnboardingProfileScreen({super.key, required this.username});
+  const OnboardingProfileScreen({super.key, this.username});
 
   @override
   State<OnboardingProfileScreen> createState() =>
@@ -15,6 +15,21 @@ class OnboardingProfileScreen extends StatefulWidget {
 class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
     with SingleTickerProviderStateMixin {
   final _supabaseService = SupabaseService();
+
+  /// Username to greet with and save. Uses the value passed from Registration
+  /// when present, otherwise recovers it from the account (set at sign-up),
+  /// finally falling back to the email prefix. Keeps onboarding working whether
+  /// it's reached right after registration OR later from splash/login.
+  String get _displayName {
+    if (widget.username != null && widget.username!.isNotEmpty) {
+      return widget.username!;
+    }
+    final meta = _supabaseService.currentUser?.userMetadata?['username'];
+    if (meta is String && meta.isNotEmpty) return meta;
+    final email = _supabaseService.currentUser?.email;
+    if (email != null && email.contains('@')) return email.split('@').first;
+    return 'there';
+  }
 
   // ✨ Sky Blue Theme mapped to the structural layout
   static const Color _bg = Color(0xFFF0F8FF);
@@ -69,7 +84,7 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
 
     try {
       await _supabaseService.saveStudentProfile(
-        username: widget.username,
+        username: _displayName,
         age: int.parse(_selectedAge),
         standard: _selectedStandard,
         studyTime: _selectedStudyTime,
@@ -210,7 +225,7 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
         ),
         const SizedBox(height: 24),
         Text(
-          'Hi, ${widget.username}! 👋',
+          'Hi, $_displayName! 👋',
           style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.w900,

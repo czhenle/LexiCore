@@ -240,6 +240,11 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
         readingScore:    _finalScores['Reading']!,
         writingScore:    _finalScores['Writing']!,
       );
+      // Seed the per-sub-skill mastery map that drives adaptive practice.
+      await _supabaseService.seedMasteryFromAssessment(
+        skillScores: _finalScores,
+        standard:    _studentStandard,
+      );
     } catch (e) {
       debugPrint('Assessment save error: $e');
     }

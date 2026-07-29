@@ -10,6 +10,7 @@ import '../modules/reading_module_screen.dart';
 import '../modules/writing_module_screen.dart';
 import '../ai_chatbot/ai_chatbot_screen.dart';
 import '../user_profiling/user_profile_screen.dart';
+import '../modules/adaptive_practice_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -134,6 +135,15 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: _bg,
       extendBody: false,
+      floatingActionButton: FloatingActionButton.extended(   // TEMP — remove later
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AdaptivePracticeScreen()),
+        ),
+        backgroundColor: const Color(0xFF1E88E5),
+        icon: const Icon(Icons.science, color: Colors.white),
+        label: const Text('Adaptive', style: TextStyle(color: Colors.white)),
+      ),
       appBar: _selectedIndex == 0
           ? AppBar(
               backgroundColor: Colors.transparent,

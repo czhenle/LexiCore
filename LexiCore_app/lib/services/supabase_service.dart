@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
+import '../models/learner_model.dart';
 
 class SupabaseService {
   // ── AUTH ──────────────────────────────────────────────────────────────────
 
-  Future<AuthResponse> signUp(String email, String password) async {
-    return await supabase.auth.signUp(email: email, password: password);
+  Future<AuthResponse> signUp(String email, String password,
+      {String? username}) async {
+    return await supabase.auth.signUp(
+      email: email,
+      password: password,
+      data: username == null ? null : {'username': username},
+    );
   }
 
   Future<AuthResponse> signIn(String email, String password) async {
@@ -88,6 +94,38 @@ class SupabaseService {
     });
   }
 
+  /// Seeds the per-sub-skill mastery map from the coarse assessment scores.
+  /// Each sub-skill of a skill starts at that skill's estimated ability; the
+  /// online Elo loop then refines each one independently as the student
+  /// practises. Called once, right after the assessment is scored.
+  Future<void> seedMasteryFromAssessment({
+    required Map<String, int> skillScores, // e.g. {'Grammar': 62, ...}
+    required int standard,
+  }) async {
+    final userId = currentUser?.id;
+    if (userId == null) return;
+
+    // Taxonomy is public-read; one seeded row per sub-skill.
+    final subSkills =
+        await supabase.from('sub_skills').select('code, skill');
+
+    final rows = <Map<String, dynamic>>[];
+    for (final s in (subSkills as List)) {
+      final skill = s['skill'] as String;
+      final score = skillScores[skill] ?? 50; // neutral default if missing
+      final m = MasteryState(
+        subSkillCode: s['code'] as String,
+        standard: standard,
+        ability: EloConfig.abilityFromScore(score, standard),
+      );
+      rows.add(m.toRow(userId));
+    }
+
+    if (rows.isNotEmpty) {
+      await supabase.from('skill_mastery').upsert(rows);
+    }
+  }
+
   Future<Map<String, dynamic>?> getAssessmentResults() async {
     final userId = currentUser?.id;
     if (userId == null) return null;
@@ -148,8 +186,9 @@ class SupabaseService {
     };
 
     for (final row in history) {
-      final type = row['module_type'] as String;
-      final unit = row['unit_number'] as int;
+      final type = row['module_type'] as String?;
+      final unit = (row['unit_number'] as int?) ?? 0;
+      if (type == null || !progress.containsKey(type)) continue;
       if (unit > (progress[type] ?? 0)) {
         progress[type] = unit;
       }

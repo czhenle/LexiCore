@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
         result.questions.map(async (q) => {
           try {
             const img = await openai.images.generate({
-              model:  "dall-e-2",
+              model:  "gpt-image-1-mini",
               prompt: `Simple, cute, kid-friendly illustration of a ${q.image_keyword}. Flat vector art style, clean white background, no text, no labels.`,
               n:      1,
               size:   "256x256",
