@@ -5,7 +5,8 @@ import { z } from "npm:zod";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 function jsonResponse(data: unknown, status = 200) {
@@ -18,30 +19,47 @@ function jsonResponse(data: unknown, status = 200) {
 // ── Schema ───────────────────────────────────────────────────────────────────
 const baseSchema = z.object({
   questions: z.array(z.object({
-    question:       z.string(),
-    options:        z.object({ A: z.string(), B: z.string(), C: z.string(), D: z.string() }),
+    question: z.string(),
+    options: z.object({
+      A: z.string(),
+      B: z.string(),
+      C: z.string(),
+      D: z.string(),
+    }),
     correct_answer: z.enum(["A", "B", "C", "D"]),
-    explanation:    z.string(),
+    explanation: z.string(),
   })),
 });
 
 const imageSchema = z.object({
   questions: z.array(z.object({
-    question:       z.string(),
-    options:        z.object({ A: z.string(), B: z.string(), C: z.string(), D: z.string() }),
+    question: z.string(),
+    options: z.object({
+      A: z.string(),
+      B: z.string(),
+      C: z.string(),
+      D: z.string(),
+    }),
     correct_answer: z.enum(["A", "B", "C", "D"]),
-    explanation:    z.string(),
-    image_keyword:  z.string().describe("A single simple concrete noun for DALL-E, e.g. 'elephant', 'bicycle', 'apple'"),
+    explanation: z.string(),
+    image_keyword: z.string().describe(
+      "A single simple concrete noun for DALL-E, e.g. 'elephant', 'bicycle', 'apple'",
+    ),
   })),
 });
 
 const contextSchema = z.object({
   questions: z.array(z.object({
-    context_text:   z.string().describe("A sentence with ___ as the blank"),
-    question:       z.string(),
-    options:        z.object({ A: z.string(), B: z.string(), C: z.string(), D: z.string() }),
+    context_text: z.string().describe("A sentence with ___ as the blank"),
+    question: z.string(),
+    options: z.object({
+      A: z.string(),
+      B: z.string(),
+      C: z.string(),
+      D: z.string(),
+    }),
     correct_answer: z.enum(["A", "B", "C", "D"]),
-    explanation:    z.string(),
+    explanation: z.string(),
   })),
 });
 
@@ -59,13 +77,15 @@ const wordPoolByLevel: Record<number, string> = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   try {
     const { standard = 3, mode = "meaning" } = await req.json();
     // topic is intentionally ignored — we use the random word pool instead
 
-    const level    = Math.min(Math.max(Number(standard), 1), 6);
+    const level = Math.min(Math.max(Number(standard), 1), 6);
     const wordPool = wordPoolByLevel[level] ?? wordPoolByLevel[3];
 
     const llm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.9 });
@@ -75,31 +95,39 @@ Deno.serve(async (req) => {
       const structuredLlm = llm.withStructuredOutput(imageSchema);
       const prompt = ChatPromptTemplate.fromMessages([
         ["system", `You are a KSSR English Teacher for Standard ${level}.`],
-        ["human", `Create 5 vocabulary multiple-choice questions. 
+        [
+          "human",
+          `Create 5 vocabulary multiple-choice questions. 
           Each question shows a different word from this broad pool: ${wordPool}.
           Pick 5 DIFFERENT words — do NOT use the same topic twice.
           Each question asks "What is this?" and shows an image.
           The image_keyword must be a single concrete noun that DALL-E can illustrate clearly (e.g. "umbrella", "bicycle", "mango").
           Example question: "What is this?" with an image of a bicycle, options: A) car B) bicycle C) airplane D) boat
-          Make all 4 options plausible but only one correct.`],
+          Make all 4 options plausible but only one correct.`,
+        ],
       ]);
       const result = await prompt.pipe(structuredLlm).invoke({});
 
-      const openai = new OpenAI();
+      const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
       const withImages = await Promise.all(
         result.questions.map(async (q) => {
           try {
             const img = await openai.images.generate({
-              model:  "gpt-image-1-mini",
-              prompt: `Simple, cute, kid-friendly illustration of a ${q.image_keyword}. Flat vector art style, clean white background, no text, no labels.`,
-              n:      1,
-              size:   "256x256",
+              model: "gpt-image-2-2026-04-21",
+              prompt:
+                `Simple, cute, kid-friendly illustration of a ${q.image_keyword}. Flat vector art style, clean white background, no text, no labels.`,
+              n: 1,
+              size: "1024x1024", // valid gpt-image size
+              quality: "low", // cheapest tier — fine for simple clip-art nouns
+              // NO response_format:"url" — gpt-image models don't support URLs
             });
-            return { ...q, image_url: img.data?.[0]?.url ?? null };
-          } catch {
-            return { ...q, image_url: null };
+            const b64 = img.data?.[0]?.b64_json ?? null;
+            return { ...q, image_b64: b64 }; // return base64, not a URL
+          } catch (e) {
+            console.error("image gen failed:", e); // never silent
+            return { ...q, image_b64: null };
           }
-        })
+        }),
       );
       return jsonResponse({ questions: withImages });
     }
@@ -109,12 +137,15 @@ Deno.serve(async (req) => {
       const structuredLlm = llm.withStructuredOutput(baseSchema);
       const prompt = ChatPromptTemplate.fromMessages([
         ["system", `You are a KSSR English Teacher for Standard ${level}.`],
-        ["human", `Create 5 vocabulary questions. 
+        [
+          "human",
+          `Create 5 vocabulary questions. 
           Pick 5 DIFFERENT words from this broad pool: ${wordPool}.
           Do NOT restrict to one topic — mix different categories freely.
           Each question gives a definition and asks which word matches.
           Example: "Which word means moving very fast?" A) slow B) quick C) heavy D) quiet
-          Make sure the words chosen are varied and appropriate for Standard ${level} students.`],
+          Make sure the words chosen are varied and appropriate for Standard ${level} students.`,
+        ],
       ]);
       const result = await prompt.pipe(structuredLlm).invoke({});
       return jsonResponse(result);
@@ -124,12 +155,17 @@ Deno.serve(async (req) => {
     if (mode === "context") {
       const structuredLlm = llm.withStructuredOutput(contextSchema);
       const prompt = ChatPromptTemplate.fromMessages([
-        ["system", `You are an experienced KSSR English Teacher designing vocabulary-in-context exercises for Standard ${level} students.
+        [
+          "system",
+          `You are an experienced KSSR English Teacher designing vocabulary-in-context exercises for Standard ${level} students.
           Your goal is to help students:
           1. Distinguish between commonly confused or similar-meaning words (e.g. "fast" vs "quick", "big" vs "large", "happy" vs "glad")
           2. Understand how word choice changes meaning depending on situation or context
-          3. Build accuracy in real-life vocabulary usage appropriate for their level`],
-        ["human", `Create 5 vocabulary-in-context fill-in-the-blank questions for Standard ${level} students.
+          3. Build accuracy in real-life vocabulary usage appropriate for their level`,
+        ],
+        [
+          "human",
+          `Create 5 vocabulary-in-context fill-in-the-blank questions for Standard ${level} students.
 
           WORD SELECTION:
           - Pick 5 DIFFERENT words from this pool: ${wordPool}
@@ -140,7 +176,9 @@ Deno.serve(async (req) => {
           - Each context_text must be a natural, realistic sentence with ___ as the blank
           - The sentence must provide enough context clues so that only ONE word is clearly correct
           - Sentences must reflect real-life scenarios a Malaysian Standard ${level} student would recognise (school, home, market, playground, etc.)
-          - Sentence length and vocabulary must be appropriate for Standard ${level} (age ${level + 6})
+          - Sentence length and vocabulary must be appropriate for Standard ${level} (age ${
+            level + 6
+          })
 
           DISTRACTOR DESIGN RULES:
           - At least 2 of the 4 options must be plausible near-synonyms or related words that students commonly confuse
@@ -155,14 +193,16 @@ Deno.serve(async (req) => {
           question: "Which word best completes the sentence?"
           options: A) quick  B) fast  C) hurried  D) rushed
           correct_answer: B
-          explanation: "'Fast' describes sustained high speed, which fits an athlete's consistent running pace. 'Quick' implies a brief burst of speed, 'hurried' suggests nervousness, and 'rushed' implies carelessness — none fit a competitive race context."`],
+          explanation: "'Fast' describes sustained high speed, which fits an athlete's consistent running pace. 'Quick' implies a brief burst of speed, 'hurried' suggests nervousness, and 'rushed' implies carelessness — none fit a competitive race context."`,
+        ],
       ]);
       const result = await prompt.pipe(structuredLlm).invoke({});
       return jsonResponse(result);
     }
 
-    return jsonResponse({ error: "Invalid mode. Use: image | meaning | context" }, 400);
-
+    return jsonResponse({
+      error: "Invalid mode. Use: image | meaning | context",
+    }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return jsonResponse({ error: message }, 500);

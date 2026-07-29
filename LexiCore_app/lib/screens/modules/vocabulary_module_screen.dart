@@ -5,6 +5,7 @@ import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
 import '../../data/curriculum.dart';
 import 'result_screen.dart';
+import 'dart:convert';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const Color _vocabColor = Color(0xFFFF9800);
@@ -391,7 +392,7 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
     final q = _questions[_currentIndex];
     final options = q['options'] as Map<String, dynamic>? ?? {};
     final correct = q['correct_answer'] as String?;
-    final imageUrl = q['image_url'] as String?;
+    final imageB64 = q['image_b64'] as String?;
     final contextText = q['context_text'] as String?;
     final explanation = q['explanation'] as String?;
     final progress = (_currentIndex + 1) / _questions.length;
@@ -443,35 +444,22 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
               const SizedBox(height: 16),
 
               // Image (guess mode)
-              if (imageUrl != null) ...[
-                Container(
-                  height: 220,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF8F0),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: _vocabColor.withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(
-                          Icons.image_not_supported_outlined,
-                          size: 48,
-                          color: _vocabColor.withValues(alpha: 0.3),
-                        ),
-                      ),
+              if (imageB64 != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.memory(
+                    base64Decode(imageB64),
+                    width: 200,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.image_not_supported_outlined,
+                      size: 48,
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
               ],
-              
+
               // Context sentence (context mode)
               if (contextText != null) ...[
                 Container(
