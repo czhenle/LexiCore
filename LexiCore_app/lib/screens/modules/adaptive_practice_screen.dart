@@ -11,7 +11,10 @@ import '../../widgets/tutor_sheet.dart';
 /// Items come from the `generate` Edge Function (validate-and-repair). If that
 /// call fails, it falls back to a local stub so the loop never dead-ends.
 class AdaptivePracticeScreen extends StatefulWidget {
-  const AdaptivePracticeScreen({super.key});
+  /// When set, practice is restricted to sub-skills of this skill
+  /// (e.g. 'Writing'). When null, the policy picks across all skills.
+  final String? focusSkill;
+  const AdaptivePracticeScreen({super.key, this.focusSkill});
 
   @override
   State<AdaptivePracticeScreen> createState() => _AdaptivePracticeScreenState();
@@ -44,20 +47,13 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   String? _selected;
   bool _answered = false;
   bool _fetching = false;
-  bool _usedFallback = false;
   final _answerCtrl = TextEditingController();
 
   // Feedback snapshot (so the panel can show the movement)
-  double _beforeAbility = 0;
-  double _afterAbility = 0;
-  int _beforeRung = 0;
-  int _afterRung = 0;
   bool _lastCorrect = false;
-  int _served = 0;
 
   // Session error memory: sub_skill_code -> recent wrong-answer notes.
   final Map<String, List<String>> _errorLog = {};
-  int _targetedErrors = 0; // how many errors were fed into the current item
 
   // Checkpoint (re-assessment) state.
   static const int _cpItems = 3;    // items in a checkpoint
@@ -104,6 +100,16 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       ((_confirmed[m.subSkillCode] ?? m.masteredRung()) + 1).clamp(1, 5);
 
   String _skillOf(String code) => _codeToSkill[code] ?? 'Grammar';
+
+  /// States the policy may choose from. If a focus skill is set, restrict to
+  /// its sub-skills (falling back to all if none are seeded for it yet).
+  List<MasteryState> _activeStates() {
+    final focus = widget.focusSkill;
+    if (focus == null) return _states;
+    final filtered =
+        _states.where((s) => _skillOf(s.subSkillCode) == focus).toList();
+    return filtered.isEmpty ? _states : filtered;
+  }
   String _formatFor(String skill, int rung) =>
       (_formats[skill] ?? _formats['Grammar']!)[(rung - 1).clamp(0, 4)];
 
@@ -115,7 +121,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       focus = FocusDecision(m.subSkillCode, _cpRung,
           EloConfig.itemDifficulty(m.standard, _cpRung), 0);
     } else {
-      final picked = AdaptivePolicy().selectNext(_states, _skillOf);
+      final picked = AdaptivePolicy().selectNext(_activeStates(), _skillOf);
       final m =
           _states.firstWhere((s) => s.subSkillCode == picked.subSkillCode);
       final rung = _targetRung(m); // gated by confirmed level
@@ -129,14 +135,12 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         .reversed
         .take(3)
         .toList();
-    _targetedErrors = recentErrors.length;
     setState(() {
       _focus = focus;
       _item = null;
       _fetching = true;
       _selected = null;
       _answered = false;
-      _usedFallback = false;
       _answerCtrl.clear();
     });
 
@@ -145,7 +149,6 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       item = await _fetchItem(focus, skill, name, format, recentErrors);
     } catch (_) {
       item = _stubItem(skill, name, focus.rungNumber, format);
-      _usedFallback = true;
     }
     if (!mounted) return;
     setState(() {
@@ -227,13 +230,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
 
     if (!correct) _recordError(isChoice, response);
 
-    _beforeAbility = m.ability;
-    _beforeRung = m.masteredRung();
     m.recordAttempt(rungNumber: _focus!.rungNumber, correct: correct);
-    _afterAbility = m.ability;
-    _afterRung = m.masteredRung();
     _lastCorrect = correct;
-    _served += 1;
 
     // ── Checkpoint state machine ─────────────────────────────────────────
     bool cpJustFinished = false;
@@ -337,7 +335,9 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       appBar: AppBar(
         backgroundColor: _blue,
         foregroundColor: Colors.white,
-        title: const Text('Adaptive Practice'),
+        title: Text(widget.focusSkill != null
+            ? '${widget.focusSkill} Practice'
+            : 'Adaptive Practice'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -363,7 +363,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_focus != null) _learnerPanel(),
+            if (_focus != null) _topicHeader(),
             const SizedBox(height: 40),
             const Center(child: CircularProgressIndicator()),
             const SizedBox(height: 12),
@@ -380,20 +380,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _learnerPanel(),
+          _topicHeader(),
           const SizedBox(height: 16),
-          if (_usedFallback)
-            Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                  'Offline stub — the generate function was unavailable',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-            ),
           if (_inCheckpoint) _checkpointBanner(),
           Card(
             child: Padding(
@@ -496,64 +484,26 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     );
   }
 
-  Widget _learnerPanel() {
+  // Minimal, kid-friendly header — just what skill/topic you're on.
+  Widget _topicHeader() {
     final focus = _focus!;
     final name = _codeToName[focus.subSkillCode] ?? focus.subSkillCode;
     final skill = _skillOf(focus.subSkillCode);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _blue.withValues(alpha: 0.3)),
+    const emoji = {
+      'Vocabulary': '\u{1F4D6}',
+      'Grammar': '\u{270F}\u{FE0F}',
+      'Reading': '\u{1F4DA}',
+      'Writing': '\u{270D}\u{FE0F}',
+    };
+    return Row(children: [
+      Text(emoji[skill] ?? '\u{2B50}', style: const TextStyle(fontSize: 22)),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text('$skill \u00B7 $name',
+            style: const TextStyle(
+                fontWeight: FontWeight.w800, color: _navy, fontSize: 15)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            const Icon(Icons.psychology_alt, color: _navy, size: 18),
-            const SizedBox(width: 6),
-            Text('Learner model  ·  item ${_served + (_answered ? 0 : 1)}',
-                style: const TextStyle(fontWeight: FontWeight.w700, color: _navy)),
-          ]),
-          const Divider(),
-          Text('$skill · $name',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
-          Text('Confirmed rung ${_confirmed[focus.subSkillCode] ?? 0}  →  '
-              'target rung ${focus.rungNumber}  ·  '
-              'β=${focus.targetDifficulty.toStringAsFixed(0)}',
-              style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
-          if (_targetedErrors > 0) ...[
-            const SizedBox(height: 6),
-            Row(children: [
-              const Icon(Icons.my_location, size: 14, color: Color(0xFFD84315)),
-              const SizedBox(width: 4),
-              Text(
-                  'Targeting $_targetedErrors recent mistake'
-                  '${_targetedErrors == 1 ? '' : 's'}',
-                  style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFD84315))),
-            ]),
-          ],
-          if (_answered) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Ability ${_beforeAbility.toStringAsFixed(0)} → '
-              '${_afterAbility.toStringAsFixed(0)}   '
-              '(${(_afterAbility - _beforeAbility) >= 0 ? '+' : ''}'
-              '${(_afterAbility - _beforeAbility).toStringAsFixed(0)})',
-              style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: _lastCorrect ? Colors.green.shade700 : Colors.red.shade700),
-            ),
-            Text('Mastered rung $_beforeRung → $_afterRung',
-                style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
-          ],
-        ],
-      ),
-    );
+    ]);
   }
 
   Widget _checkpointBanner() {
@@ -562,10 +512,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         : const Color(0xFF6A1B9A);
     final text = _cpFinished
         ? (_cpPassed
-            ? 'Checkpoint passed — rung $_cpRung confirmed! ($_cpCorrect/$_cpItems)'
-            : 'Checkpoint not passed — keep practising rung $_cpRung '
+            ? 'Checkpoint passed — level $_cpRung confirmed! ($_cpCorrect/$_cpItems)'
+            : 'Checkpoint not passed — keep practising level $_cpRung '
                 '($_cpCorrect/$_cpItems)')
-        : 'Checkpoint: prove rung $_cpRung   ·   $_cpDone/$_cpItems answered';
+        : 'Checkpoint: prove level $_cpRung   ·   $_cpDone/$_cpItems answered';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(10),

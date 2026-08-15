@@ -112,4 +112,60 @@ class MasteryService {
     }
     return map;
   }
+
+  /// Aggregates the mastery map into per-skill averages, a strongest/weakest
+  /// skill, and an overall progress fraction — for the Home dashboard.
+  Future<MasterySummary?> masterySummary() async {
+    final uid = _uid;
+    if (uid == null) return null;
+    final tax = await taxonomy();
+    final codeToSkill = {
+      for (final t in tax) t['code'] as String: t['skill'] as String
+    };
+    final rows = await _sb
+        .from('skill_mastery')
+        .select('sub_skill_code, mastered_rung')
+        .eq('user_id', uid);
+    final list = List<Map<String, dynamic>>.from(rows);
+    if (list.isEmpty) return null;
+
+    final sums = <String, double>{};
+    final counts = <String, int>{};
+    double totalRung = 0;
+    int totalN = 0;
+    for (final r in list) {
+      final skill = codeToSkill[r['sub_skill_code']] ?? 'Other';
+      final rung = ((r['mastered_rung'] as num?) ?? 0).toDouble();
+      sums[skill] = (sums[skill] ?? 0) + rung;
+      counts[skill] = (counts[skill] ?? 0) + 1;
+      totalRung += rung;
+      totalN += 1;
+    }
+    final avg = <String, double>{
+      for (final s in sums.keys) s: sums[s]! / counts[s]!
+    };
+    final ordered = avg.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return MasterySummary(
+      avgRungBySkill: avg,
+      strongest: ordered.first.key,
+      weakest: ordered.last.key,
+      overall: totalN > 0 ? (totalRung / totalN) / 5.0 : 0.0,
+    );
+  }
+}
+
+/// A snapshot of a student's mastery for the Home dashboard.
+class MasterySummary {
+  final Map<String, double> avgRungBySkill; // skill -> mean mastered rung (0..5)
+  final String strongest;
+  final String weakest;
+  final double overall; // 0..1
+
+  MasterySummary({
+    required this.avgRungBySkill,
+    required this.strongest,
+    required this.weakest,
+    required this.overall,
+  });
 }

@@ -49,7 +49,7 @@ const SUBSKILLS = {
   Reading:    [["reading.literal", "Literal Comprehension"], ["reading.inference", "Inference"], ["reading.sequencing", "Sequencing Events"]],
   Writing:    [["writing.mechanics", "Punctuation & Capitalisation"], ["writing.sentence_combining", "Sentence Combining"], ["writing.spelling", "Spelling"]],
 };
-const RUNGS = [1, 2, 3, 4, 5];   // all rungs (rung 1 is exposure-type — may score differently)
+const RUNGS = [1, 3, 4];   // all rungs (rung 1 is exposure-type — may score differently)
 const STANDARDS = [3];           // add e.g. [2, 4] for a second/third standard
 
 const STANDARD_BASE = { 1: 1000, 2: 1080, 3: 1160, 4: 1240, 5: 1320, 6: 1400 };
@@ -133,16 +133,18 @@ const pct = (x, n) => (n ? `${((x / n) * 100).toFixed(0)}%` : "—");
 
 // ── one run over the whole sample ───────────────────────────────────────────
 async function runOnce(runIdx) {
+  const genIssuesOf = (gen) =>
+    (gen?.error ? [String(gen.error)] : (gen?.qa ?? []).flatMap((a) => a.issues || [])).join(" | ");
   const sample = buildSample();
   const rows = [];
   for (const spec of sample) {
     const gen = await callGenerate(spec);
     if (!gen || !gen.item) {
-      rows.push({ run: runIdx, spec, generated: false, attempts: gen?.attempts ?? 0, verdict: null, pass: false });
+      rows.push({ run: runIdx, spec, generated: false, attempts: gen?.attempts ?? 0, verdict: null, pass: false, genIssues: genIssuesOf(gen) });
       continue;
     }
     const verdict = await judge(gen.item, spec);
-    rows.push({ run: runIdx, spec, generated: true, attempts: gen.attempts ?? 1, item: gen.item, verdict, pass: passed(verdict) });
+    rows.push({ run: runIdx, spec, generated: true, attempts: gen.attempts ?? 1, item: gen.item, verdict, pass: passed(verdict), genIssues: genIssuesOf(gen) });
   }
   return rows;
 }
@@ -222,20 +224,22 @@ async function main() {
   md += `\n## Failures (${fails.length})\n\n`;
   if (fails.length === 0) md += `None across all runs.\n`;
   else {
-    md += `| Run | Sub-skill | Rung | Issues |\n|---|---|---|---|\n`;
+    md += `| Run | Sub-skill | Rung | Format | Issues |\n|---|---|---|---|---|\n`;
     for (const r of fails) {
-      const issues = r.verdict ? (r.verdict.issues || []).join("; ") : "no item generated";
-      md += `| ${r.run} | ${r.spec.sub_skill} | ${r.spec.rung} | ${issues || "failed a criterion"} |\n`;
+      const issues = r.verdict
+        ? (r.verdict.issues || []).join("; ")
+        : `[generation failed] ${r.genIssues || "no item after retries"}`;
+      md += `| ${r.run} | ${r.spec.sub_skill} | ${r.spec.rung} | ${r.spec.format} | ${issues || "failed a criterion"} |\n`;
     }
   }
   writeFileSync("evaluation_results.md", md);
 
   // CSV (all rows)
-  let csv = "run,skill,sub_skill,rung,standard,attempts,pass," + CRITERIA.join(",") + ",issues\n";
+  let csv = "run,skill,sub_skill,rung,standard,attempts,pass," + CRITERIA.join(",") + ",judge_issues,gen_issues\n";
   for (const r of allRows) {
     const v = r.verdict || {};
     csv += [r.run, r.spec.skill, r.spec.sub_skill, r.spec.rung, r.spec.standard, r.attempts, r.pass,
-      ...CRITERIA.map((c) => v[c] ?? ""), `"${(v.issues || []).join("; ")}"`].join(",") + "\n";
+      ...CRITERIA.map((c) => v[c] ?? ""), `"${(v.issues || []).join("; ")}"`, `"${(r.genIssues || "").replace(/"/g, "'")}"`].join(",") + "\n";
   }
   writeFileSync("evaluation_results.csv", csv);
 

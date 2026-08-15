@@ -185,6 +185,7 @@ class ApiService {
     int grammarScore  = 0,
     int readingScore  = 0,
     int writingScore  = 0,
+    String? imageBase64,
   }) async {
     try {
       final response = await http.post(
@@ -199,6 +200,7 @@ class ApiService {
           'grammar_score':  grammarScore,
           'reading_score':  readingScore,
           'writing_score':  writingScore,
+          if (imageBase64 != null) 'image': imageBase64,
         }),
       );
       if (response.statusCode == 200) {

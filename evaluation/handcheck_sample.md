@@ -3,17 +3,18 @@
 Read each item, decide yourself whether it is correct/on-target/age-appropriate,
 then compare with the judge's verdict. Report the agreement rate in your writeup.
 
-## 1. grammar.articles — rung 1
+## 1. reading.sequencing — rung 1
 
-**Question:** Fill in the blanks with the correct article: a, an, or the.
+**Question:** Read the sentences below. They tell a story about Ali's morning. Write the sentences in the correct order from first to last.
 
-1. I see ___ cat in the garden.
-2. She has ___ orange in her bag.
-3. We went to ___ park yesterday.
+1. Ali brushed his teeth.
+2. Ali woke up.
+3. Ali ate breakfast.
+4. Ali put on his school bag.
 
-**Marked correct:** 1. a
-2. an
-3. the
+Write the correct order by writing the numbers in a sequence, for example: 2, 1, 3, 4
+
+**Marked correct:** 2, 1, 3, 4
 
 **Judge verdict:** {"answer_correct":true,"single_correct":true,"on_target_subskill":true,"on_target_rung":true,"age_appropriate":true,"issues":[]}
 
@@ -21,11 +22,11 @@ then compare with the judge's verdict. Report the agreement rate in your writeup
 
 ---
 
-## 2. vocab.food_drink — rung 1
+## 2. reading.inference — rung 4
 
-**Question:** Which food is shown in the picture? (A picture of an apple)
+**Question:** Siti saw her friend Ali wearing a raincoat and carrying an umbrella. Later, she heard the weather forecast say it would rain today. What can Siti MOST LIKELY do to prepare for going outside?
 
-**Options:** {"A":"Apple","B":"Carrot","C":"Rice","D":"Milk"}
+**Options:** {"A":"Wear a raincoat and bring an umbrella.","B":"Wear sandals and a T-shirt.","C":"Leave her umbrella at home.","D":"Go outside without any rain protection."}
 
 **Marked correct:** A
 
@@ -35,13 +36,11 @@ then compare with the judge's verdict. Report the agreement rate in your writeup
 
 ---
 
-## 3. vocab.food_drink — rung 1
+## 3. grammar.past_tense — rung 1
 
-**Question:** Which word means a sweet yellow fruit that monkeys like to eat?
+**Question:** Look at the sentence: "I play football yesterday." Write the correct sentence using the past tense of the verb "play."
 
-**Options:** {"A":"banana","B":"carrot","C":"bread","D":"rice"}
-
-**Marked correct:** A
+**Marked correct:** I played football yesterday.
 
 **Judge verdict:** {"answer_correct":true,"single_correct":true,"on_target_subskill":true,"on_target_rung":true,"age_appropriate":true,"issues":[]}
 
@@ -49,11 +48,13 @@ then compare with the judge's verdict. Report the agreement rate in your writeup
 
 ---
 
-## 4. writing.spelling — rung 5
+## 4. writing.sentence_combining — rung 1
 
-**Question:** Write five words that you know which have the sound /k/ spelled with the letter 'k'.
+**Question:** Combine these two sentences into one sentence using the word 'and':
 
-**Marked correct:** kite, king, kangaroo, key, kitchen
+I like apples. I like bananas.
+
+**Marked correct:** I like apples and bananas.
 
 **Judge verdict:** {"answer_correct":true,"single_correct":true,"on_target_subskill":true,"on_target_rung":true,"age_appropriate":true,"issues":[]}
 
@@ -61,13 +62,14 @@ then compare with the judge's verdict. Report the agreement rate in your writeup
 
 ---
 
-## 5. vocab.food_drink — rung 2
+## 5. writing.sentence_combining — rung 4
 
-**Question:** Which word means a sweet yellow fruit that monkeys like to eat?
+**Question:** Combine the two sentences below into one sentence using 'because'.
 
-**Options:** {"A":"Banana","B":"Carrot","C":"Rice","D":"Milk"}
+1. The boy was happy.
+2. He found his lost kitten.
 
-**Marked correct:** A
+**Marked correct:** The boy was happy because he found his lost kitten.
 
 **Judge verdict:** {"answer_correct":true,"single_correct":true,"on_target_subskill":true,"on_target_rung":true,"age_appropriate":true,"issues":[]}
 

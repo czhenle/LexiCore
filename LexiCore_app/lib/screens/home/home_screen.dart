@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
+import '../../services/mastery_service.dart';
 import '../../widgets/lexi_nav_bar.dart';
 import 'article_screen.dart';
 import '../ai_schedule/study_schedule_screen.dart';
@@ -33,6 +34,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color _brightOrange  = Color(0xFFFF9800);
 
   final _supabaseService = SupabaseService();
+  final _mastery = MasteryService();
+  MasterySummary? _summary;
 
   int _selectedIndex = 0;
 
@@ -45,7 +48,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool   _isLoading     = true;
 
   // Today's task from schedule (if saved)
-  Map<String, dynamic>? _todayTask;
 
   @override
   void initState() {
@@ -57,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final profile    = await _supabaseService.getStudentProfile();
       final assessment = await _supabaseService.getAssessmentResults();
-      final today      = await _supabaseService.getTodayTask();
+      final summary    = await _mastery.masterySummary();
 
       if (mounted) {
         setState(() {
@@ -67,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _grammarScore  = (assessment?['grammar_score']   as int?)   ?? 0;
           _readingScore  = (assessment?['reading_score']   as int?)   ?? 0;
           _writingScore  = (assessment?['writing_score']   as int?)   ?? 0;
-          _todayTask     = today;
+          _summary       = summary;
           _isLoading     = false;
         });
       }
@@ -135,15 +137,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: _bg,
       extendBody: false,
-      floatingActionButton: FloatingActionButton.extended(   // TEMP — remove later
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const AdaptivePracticeScreen()),
-        ),
-        backgroundColor: const Color(0xFF1E88E5),
-        icon: const Icon(Icons.science, color: Colors.white),
-        label: const Text('Adaptive', style: TextStyle(color: Colors.white)),
-      ),
       appBar: _selectedIndex == 0
           ? AppBar(
               backgroundColor: Colors.transparent,
@@ -216,10 +209,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 28),
 
-          // ── Card 1: Today's Task ──────────────────────────────────────
-          _sectionLabel('Today\'s Task'),
+          // ── Today's Practice: progress, strengths, weaknesses, start ──
+          _sectionLabel('Today\'s Practice'),
           const SizedBox(height: 12),
-          _buildTodayTaskCard(),
+          _buildLearningCard(),
           const SizedBox(height: 28),
 
           // ── Card 2: Dashboard ─────────────────────────────────────────
@@ -238,122 +231,126 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Card 1: Today's Task ────────────────────────────────────────────────
-  Widget _buildTodayTaskCard() {
-    final hasTask = _todayTask != null;
-    final skill    = hasTask
-        ? (_todayTask!['skill'] as String? ?? _weaknessSkill)
-        : _weaknessSkill;
-    final task     = hasTask
-        ? (_todayTask!['task'] as String? ??
-            'Practise your $_weaknessSkill skills')
-        : 'Practise your $_weaknessSkill skills';
-    final duration = hasTask
-        ? (_todayTask!['duration'] as String? ?? '15 mins')
-        : '15 mins';
-
+  // ── My Learning: strengths / weaknesses / progress ──────────────────────
+  Widget _buildLearningCard() {
+    final s = _summary;
+    final boxShadow = [
+      BoxShadow(
+          color: _buttonBlue.withValues(alpha: 0.08),
+          blurRadius: 12,
+          offset: const Offset(0, 4)),
+    ];
+    if (s == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: boxShadow),
+        child: const Row(children: [
+          Text('🗺️', style: TextStyle(fontSize: 32)),
+          SizedBox(width: 14),
+          Expanded(
+            child: Text('Finish your quiz to unlock your learning map!',
+                style: TextStyle(
+                    color: _navyText,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      );
+    }
+    final pct = (s.overall * 100).round();
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        // Vibrant Purple to Pink gradient for excitement
-        gradient: const LinearGradient(
-          colors: [Color(0xFF7AC9FA), Color(0xFF1E88E5), Color(0xFFDFF1FF)], 
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: _buttonBlue.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: boxShadow),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Text('⭐', style: TextStyle(fontSize: 20)),
+            const SizedBox(width: 8),
+            Text('You\'ve mastered $pct%',
+                style: const TextStyle(
+                    color: _navyText,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900)),
+          ]),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: s.overall.clamp(0.0, 1.0),
+              minHeight: 12,
+              backgroundColor: _bg,
+              valueColor: const AlwaysStoppedAnimation(_mintGreen),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(child: _skillPill('💪', 'Strong', s.strongest, _mintGreen)),
+            const SizedBox(width: 12),
+            Expanded(child: _skillPill('🎯', 'Focus on', s.weakest, _brightOrange)),
+          ]),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(
+                      builder: (_) => AdaptivePracticeScreen(focusSkill: s.weakest))),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _brightOrange,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18)),
+              ),
+              icon: const Icon(Icons.bolt_rounded, size: 20),
+              label: Text('Start Practice — ${s.weakest}',
+                  style:
+                      const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Center(
+            child: TextButton(
+              onPressed: () => _startMission(s.weakest),
+              child: const Text('Or choose a skill yourself',
+                  style: TextStyle(
+                      color: _navyText,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13)),
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _skillPill(String emoji, String label, String skill, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.star_rounded,
-                    color: Colors.white, size: 24),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Today\'s focus',
-                        style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
-                    Text(skill,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900)),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.timer_rounded,
-                        color: Colors.white, size: 14),
-                    const SizedBox(width: 6),
-                    Text(duration,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            task,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () => _startMission(skill),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: _buttonBlue,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-              ),
-              child: const Text(
-                'Start Mission',
-                style: TextStyle(
-                    fontWeight: FontWeight.w900, fontSize: 16),
-              ),
-            ),
-          ),
+          Text('$emoji $label',
+              style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text(skill,
+              style: const TextStyle(
+                  color: _navyText, fontSize: 15, fontWeight: FontWeight.w900)),
         ],
       ),
     );
@@ -388,15 +385,6 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
 
           // Strength / Weakness row
-          Row(
-            children: [
-              Expanded(child: _statBadge('Strength',   _strengthSkill,
-                  Icons.emoji_events_rounded, Colors.green)),
-              const SizedBox(width: 12),
-              Expanded(child: _statBadge('Needs focus', _weaknessSkill,
-                  Icons.fitness_center_rounded, _coralRed)),
-            ],
-          ),
           const SizedBox(height: 18),
 
           // Recommendation (Mint Green)

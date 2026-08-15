@@ -18,7 +18,7 @@ class LexiNavBar extends StatelessWidget {
     _NavItem(Icons.home_rounded,           'Home'),
     _NavItem(Icons.calendar_month_rounded, 'Schedule'),
     _NavItem(Icons.grid_view_rounded,      'Modules'),
-    _NavItem(Icons.smart_toy_rounded,      'AI Tutor'),
+    _NavItem(Icons.smart_toy_rounded,      'Homework Tutor'),
     _NavItem(Icons.person_rounded,         'Profile'),
   ];
 

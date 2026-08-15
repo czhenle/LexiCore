@@ -37,16 +37,22 @@ Deno.serve(async (req) => {
       grammar_score = 0,
       reading_score = 0,
       writing_score = 0,
+      image         = null,
     } = body;
 
     // Normalise message — adds punctuation if missing so model parses it reliably
     const cleanMessage = normaliseMessage(String(message));
 
-    if (!cleanMessage || cleanMessage === ".") {
-      return jsonResponse({ reply: "I didn't catch that! Can you type your question again? 😊" });
+    if ((!cleanMessage || cleanMessage === ".") && !image) {
+      return jsonResponse({ reply: "I didn't catch that! Can you type your question or send a photo? 😊" });
     }
 
-    const openai = new OpenAI();
+    const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+    const imageDataUrl = image
+      ? (String(image).startsWith("data:")
+          ? String(image)
+          : `data:image/jpeg;base64,${image}`)
+      : null;
 
     const systemPrompt = `You are Lexi, a warm and encouraging English tutor for Malaysian primary school students.
 
@@ -70,11 +76,23 @@ Deno.serve(async (req) => {
 
       Remember: You are patient, kind, and always make the student feel capable and supported.`;
 
+    const visionNote = imageDataUrl
+      ? "\n\nThe student has uploaded a PHOTO. If it shows their own writing, give kind, specific feedback (one thing they did well + one thing to improve). If it shows a question, help them understand and work it out step by step — guide them, don't just hand over the answer."
+      : "";
+
+   const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] | string =
+  imageDataUrl
+    ? [
+        { type: "text", text: cleanMessage === "." ? "Please look at my photo and help me." : cleanMessage },
+        { type: "image_url", image_url: { url: imageDataUrl } },
+      ]
+    : cleanMessage;
+
     const response = await openai.chat.completions.create({
       model:      "gpt-4o-mini",
       messages:   [
-        { role: "system", content: systemPrompt },
-        { role: "user",   content: cleanMessage },
+        { role: "system", content: systemPrompt + visionNote },
+        { role: "user",   content: userContent as any},
       ],
       temperature: 0.75,
     });

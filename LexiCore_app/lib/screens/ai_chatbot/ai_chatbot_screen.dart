@@ -1,4 +1,7 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
 
@@ -22,6 +25,8 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
   final _scrollController = ScrollController();
 
   final List<Map<String, String>> _messages = [];
+  final _picker = ImagePicker();
+  File? _pendingImage;
   bool _isTyping = false;
   String _weakness = 'Grammar';
   String _username = 'there';
@@ -62,17 +67,67 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     }
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    final picked = await _picker.pickImage(
+        source: source, maxWidth: 1024, imageQuality: 70);
+    if (picked != null && mounted) {
+      setState(() => _pendingImage = File(picked.path));
+    }
+  }
+
+  void _showImageSourceSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.camera_alt, color: _buttonBlue),
+            title: const Text('Take a photo'),
+            onTap: () {
+              Navigator.pop(context);
+              _pickImage(ImageSource.camera);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library, color: _buttonBlue),
+            title: const Text('Choose from gallery'),
+            onTap: () {
+              Navigator.pop(context);
+              _pickImage(ImageSource.gallery);
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    final image = _pendingImage;
+    if (text.isEmpty && image == null) return;
+
+    String? imageB64;
+    if (image != null) {
+      imageB64 = base64Encode(await image.readAsBytes());
+    }
+
     setState(() {
-      _messages.add({'role': 'user', 'text': text});
+      _messages.add({
+        'role': 'user',
+        'text': text,
+        if (imageB64 != null) 'image': imageB64,
+      });
       _isTyping = true;
+      _pendingImage = null;
     });
     _messageController.clear();
     _scrollToBottom();
 
-    final reply = await _apiService.chatWithLexi(text, 3); // Passing standard 3
+    final reply = await _apiService.chatWithLexi(
+      text.isEmpty ? 'Please help me with this.' : text,
+      3,
+      imageBase64: imageB64,
+    );
 
     setState(() {
       _isTyping = false;
@@ -158,7 +213,8 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
                   return _buildTypingIndicator();
                 }
                 final msg = _messages[index];
-                return _buildMessage(msg['role']!, msg['text']!);
+                return _buildMessage(
+                    msg['role']!, msg['text'] ?? '', msg['image']);
               },
             ),
           ),
@@ -175,10 +231,43 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: TextField(
+          if (_pendingImage != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Stack(clipBehavior: Clip.none, children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(_pendingImage!,
+                        width: 84, height: 84, fit: BoxFit.cover),
+                  ),
+                  Positioned(
+                    right: -10,
+                    top: -10,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _pendingImage = null),
+                      child: const CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Colors.white,
+                          child: Icon(Icons.close, size: 16, color: Colors.red)),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.add_photo_alternate_rounded,
+                    color: _buttonBlue, size: 28),
+                onPressed: _showImageSourceSheet,
+              ),
+              Expanded(
+                child: TextField(
               controller: _messageController,
               decoration: InputDecoration(
                 hintText: 'Message Lexi...',
@@ -213,12 +302,14 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
               ),
             ),
           ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMessage(String role, String text) {
+  Widget _buildMessage(String role, String text, [String? imageB64]) {
     final isLexi = role == 'lexi';
     return Align(
       alignment: isLexi ? Alignment.centerLeft : Alignment.centerRight,
@@ -240,14 +331,28 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
             BoxShadow(color: _navyText.withValues(alpha: 0.03), blurRadius: 5),
           ],
         ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 15,
-            color: isLexi ? _navyText : Colors.white,
-            fontWeight: FontWeight.w600,
-            height: 1.4,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (imageB64 != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.memory(base64Decode(imageB64),
+                    width: 180, fit: BoxFit.cover),
+              ),
+              if (text.isNotEmpty) const SizedBox(height: 8),
+            ],
+            if (text.isNotEmpty)
+              Text(
+                text,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: isLexi ? _navyText : Colors.white,
+                  fontWeight: FontWeight.w600,
+                  height: 1.4,
+                ),
+              ),
+          ],
         ),
       ),
     );
