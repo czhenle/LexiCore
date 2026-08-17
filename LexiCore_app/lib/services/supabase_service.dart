@@ -6,8 +6,11 @@ import '../models/learner_model.dart';
 class SupabaseService {
   // ── AUTH ──────────────────────────────────────────────────────────────────
 
-  Future<AuthResponse> signUp(String email, String password,
-      {String? username}) async {
+  Future<AuthResponse> signUp(
+    String email,
+    String password, {
+    String? username,
+  }) async {
     return await supabase.auth.signUp(
       email: email,
       password: password,
@@ -37,14 +40,18 @@ class SupabaseService {
     required int age,
     required int standard,
     required String studyTime,
+    required String grade,
+    required String rate,
   }) async {
     final userId = currentUser!.id;
     await supabase.from('student_profiles').upsert({
-      'user_id':    userId,
-      'username':   username,
-      'age':        age,
-      'standard':   standard,
+      'user_id': userId,
+      'username': username,
+      'age': age,
+      'standard': standard,
       'study_time': studyTime,
+      'grade': grade,
+      'rate': rate,
     });
   }
 
@@ -69,10 +76,9 @@ class SupabaseService {
   }) async {
     final userId = currentUser!.id;
 
-    final profile          = await getStudentProfile();
+    final profile = await getStudentProfile();
     final declaredStandard = (profile?['standard'] as int?) ?? 3;
-    final avgScore =
-        (vocabularyScore + grammarScore + readingScore + writingScore) ~/ 4;
+    final avgScore = (vocabularyScore + grammarScore + readingScore + writingScore) ~/ 4;
 
     int detectedLevel;
     if (avgScore < 40) {
@@ -84,13 +90,13 @@ class SupabaseService {
     }
 
     await supabase.from('assessment_results').upsert({
-      'user_id':          userId,
+      'user_id': userId,
       'vocabulary_score': vocabularyScore,
-      'grammar_score':    grammarScore,
-      'reading_score':    readingScore,
-      'writing_score':    writingScore,
-      'detected_level':   detectedLevel,
-      'taken_at':         DateTime.now().toIso8601String(),
+      'grammar_score': grammarScore,
+      'reading_score': readingScore,
+      'writing_score': writingScore,
+      'detected_level': detectedLevel,
+      'taken_at': DateTime.now().toIso8601String(),
     });
   }
 
@@ -106,8 +112,7 @@ class SupabaseService {
     if (userId == null) return;
 
     // Taxonomy is public-read; one seeded row per sub-skill.
-    final subSkills =
-        await supabase.from('sub_skills').select('code, skill');
+    final subSkills = await supabase.from('sub_skills').select('code, skill');
 
     final rows = <Map<String, dynamic>>[];
     for (final s in (subSkills as List)) {
@@ -117,6 +122,85 @@ class SupabaseService {
         subSkillCode: s['code'] as String,
         standard: standard,
         ability: EloConfig.abilityFromScore(score, standard),
+      );
+      rows.add(m.toRow(userId));
+    }
+
+    if (rows.isNotEmpty) {
+      await supabase.from('skill_mastery').upsert(rows);
+    }
+  }
+
+  /// Seeds ability from the student's self-reported exam grade when they SKIP
+  /// the assessment. Even 80-point steps around 1000 — simple and explainable:
+  /// A=1200, B=1120, C=1040, D=960, E=880, F=800.
+  Future<void> seedMasteryFromGrade({
+    required String grade,
+    required int standard,
+  }) async {
+    final userId = currentUser?.id;
+    if (userId == null) return;
+
+    const gradeAbility = <String, double>{
+      'A': 1200,
+      'B': 1120,
+      'C': 1040,
+      'D': 960,
+      'E': 880,
+      'F': 800,
+    };
+    final ability =
+        gradeAbility[grade.toUpperCase()] ?? 1000; // crash-guard only
+
+    final subSkills = await supabase.from('sub_skills').select('code, skill');
+
+    final rows = <Map<String, dynamic>>[];
+    for (final s in (subSkills as List)) {
+      final m = MasteryState(
+        subSkillCode: s['code'] as String,
+        standard: standard,
+        ability: ability,
+      );
+      rows.add(m.toRow(userId));
+    }
+
+    if (rows.isNotEmpty) {
+      await supabase.from('skill_mastery').upsert(rows);
+    }
+  }
+
+  /// Skip-path seeding that blends the exam grade with the student's per-skill
+  /// self-rating. Each skill = grade base ± 40 per rating step from neutral (3).
+  /// e.g. grade C base 1040; Reading rated 5 → 1120; Writing rated 2 → 1000.
+  Future<void> seedMasteryFromGradeAndRatings({
+    required String grade,
+    required Map<String, int> ratings, // {'Vocabulary':4,...}, values 1..5
+    required int standard,
+  }) async {
+    final userId = currentUser?.id;
+    if (userId == null) return;
+
+    const gradeAbility = <String, double>{
+      'A': 1200,
+      'B': 1120,
+      'C': 1040,
+      'D': 960,
+      'E': 880,
+      'F': 800,
+    };
+    final base = gradeAbility[grade.toUpperCase()] ?? 1000; // crash-guard only
+
+    final subSkills = await supabase.from('sub_skills').select('code, skill');
+
+    final rows = <Map<String, dynamic>>[];
+    for (final s in (subSkills as List)) {
+      final skill = s['skill'] as String;
+      final rating = ratings[skill] ?? 3; // 3 = neutral
+      final ability = base + (rating - 3) * 40.0;
+      final m = MasteryState(
+        subSkillCode: s['code'] as String,
+        standard: standard,
+        ability: ability,
       );
       rows.add(m.toRow(userId));
     }
@@ -141,18 +225,18 @@ class SupabaseService {
 
   Future<void> saveQuizProgress({
     required String moduleType,
-    required int    unitNumber,
+    required int unitNumber,
     required String topic,
-    required int    score,
+    required int score,
   }) async {
     final userId = currentUser!.id;
     await supabase.from('quiz_progress').insert({
-      'user_id':      userId,
-      'module_type':  moduleType,
-      'unit_number':  unitNumber,
-      'topic':        topic,
-      'score':        score,
-      'completed':    true,
+      'user_id': userId,
+      'module_type': moduleType,
+      'unit_number': unitNumber,
+      'topic': topic,
+      'score': score,
+      'completed': true,
       'completed_at': DateTime.now().toIso8601String(),
     });
   }
@@ -163,15 +247,13 @@ class SupabaseService {
     final userId = currentUser?.id;
     if (userId == null) return [];
 
-    var query =
-        supabase.from('quiz_progress').select().eq('user_id', userId);
+    var query = supabase.from('quiz_progress').select().eq('user_id', userId);
 
     if (moduleType != null) {
       query = query.eq('module_type', moduleType);
     }
 
-    final response =
-        await query.order('completed_at', ascending: false);
+    final response = await query.order('completed_at', ascending: false);
     return List<Map<String, dynamic>>.from(response);
   }
 
@@ -180,9 +262,9 @@ class SupabaseService {
     final history = await getQuizHistory();
     final Map<String, int> progress = {
       'Vocabulary': 0,
-      'Grammar':    0,
-      'Reading':    0,
-      'Writing':    0,
+      'Grammar': 0,
+      'Reading': 0,
+      'Writing': 0,
     };
 
     for (final row in history) {
@@ -204,8 +286,8 @@ class SupabaseService {
     if (userId == null) return;
 
     await supabase.from('study_schedules').upsert({
-      'user_id':    userId,
-      'plan':       plan,
+      'user_id': userId,
+      'plan': plan,
       'created_at': DateTime.now().toIso8601String(),
     });
   }
@@ -256,8 +338,7 @@ class SupabaseService {
       if (weeks == null || weeks.isEmpty) return null;
 
       // Compute which week we're currently in
-      final daysSinceStart =
-          DateTime.now().difference(createdAt).inDays;
+      final daysSinceStart = DateTime.now().difference(createdAt).inDays;
       final currentWeek = (daysSinceStart ~/ 7 + 1).clamp(1, 4);
 
       // Find the matching week
@@ -271,8 +352,13 @@ class SupabaseService {
 
       // Match today's day name
       const days = [
-        'Monday', 'Tuesday', 'Wednesday',
-        'Thursday', 'Friday', 'Saturday', 'Sunday',
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
       ];
       final todayName = days[DateTime.now().weekday - 1];
 

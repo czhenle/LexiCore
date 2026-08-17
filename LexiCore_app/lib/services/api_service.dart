@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 class ApiService {
   static const String supabaseUrl =
@@ -120,16 +121,61 @@ class ApiService {
   }
 
   // ── ARTICLE GENERATOR ───────────────────────────────────────────────────
-  Future<Map<String, dynamic>?> generateArticle(int detectedLevel) async {
+  Future<Map<String, dynamic>?> generateArticle(
+    int standard,
+    String grade,
+    String rate,
+    int? vocabularyScore,
+    int? grammarScore,
+    int? readingScore,
+    int? writingScore, {
+    bool force = false,
+  }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$supabaseUrl/article'),
-        headers: _headers,
-        body: jsonEncode({'detected_level': detectedLevel}),
+      // This function authenticates the student via their session (it calls
+      // supabase.auth.getUser() server-side), so it must be invoked through
+      // the Supabase client — not the anon-key http.post used elsewhere —
+      // so the student's login token is attached automatically.
+      final res = await sb.Supabase.instance.client.functions.invoke(
+        'article',
+        body: {
+          'standard': standard,
+          'grade': grade,
+          'rate': rate,
+          if (vocabularyScore != null) 'vocabulary_score': vocabularyScore,
+          if (grammarScore != null) 'grammar_score': grammarScore,
+          if (readingScore != null) 'reading_score': readingScore,
+          if (writingScore != null) 'writing_score': writingScore,
+          if (force) 'force': true,
+        },
       );
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      debugPrint('Article error [${response.statusCode}]: ${response.body}');
+      final data = res.data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      debugPrint('Article error: unexpected response shape: $data');
       return null;
+    } on sb.FunctionException catch (e) {
+      // Non-2xx responses (e.g. 429 when the daily regeneration cap is hit)
+      // surface as an exception, not a normal result — unwrap it so the UI
+      // still gets the {success:false, error, message, article} body the
+      // function actually sent, instead of losing it.
+      final details = e.details;
+      Map<String, dynamic>? body;
+      if (details is Map) {
+        body = Map<String, dynamic>.from(details);
+      } else if (details is String) {
+        try {
+          final decoded = jsonDecode(details);
+          if (decoded is Map) body = Map<String, dynamic>.from(decoded);
+        } catch (_) {
+          // not JSON — fall through to the generic body below
+        }
+      }
+      return body ??
+          {
+            'success': false,
+            'error': 'ARTICLE_ERROR',
+            'message': 'Could not load the story right now.',
+          };
     } catch (e) {
       debugPrint('Article network error: $e');
       return null;
@@ -176,7 +222,7 @@ class ApiService {
   }
 
   // ── AI CHATBOT ───────────────────────────────────────────────────────────
-  Future<String?> chatWithLexi(
+  Future<Map<String, dynamic>> chatWithLexi(
     String message,
     int standard, {
     int detectedLevel = 3,
@@ -186,6 +232,8 @@ class ApiService {
     int readingScore  = 0,
     int writingScore  = 0,
     String? imageBase64,
+    List<Map<String, String>> history = const [],
+    String mode = 'auto',
   }) async {
     try {
       final response = await http.post(
@@ -200,17 +248,32 @@ class ApiService {
           'grammar_score':  grammarScore,
           'reading_score':  readingScore,
           'writing_score':  writingScore,
+          'history':        history,
+          'mode':           mode,
           if (imageBase64 != null) 'image': imageBase64,
         }),
       );
       if (response.statusCode == 200) {
-        return jsonDecode(response.body)['reply'];
+        final reply = jsonDecode(response.body)['reply'];
+        if (reply is Map) return Map<String, dynamic>.from(reply);
+        // Older/string replies -> wrap so the UI can always render a type.
+        return {'type': 'simple_answer', 'text': reply?.toString() ?? ''};
       }
-      return 'Oops, something went wrong. Try again!';
+      return {
+        'type': 'simple_answer',
+        'text': 'Oops, something went wrong. Try again!'
+      };
     } catch (e) {
       debugPrint('Chat error: $e');
-      return 'Network error. Check your connection!';
+      return {
+        'type': 'simple_answer',
+        'text': 'Network error. Check your connection!'
+      };
     }
   }
 
+}
+
+extension on http.Response {
+  get statusCode => null;
 }

@@ -24,7 +24,8 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
 
-  final List<Map<String, String>> _messages = [];
+  final List<Map<String, dynamic>> _messages = [];
+  final List<Map<String, String>> _history = []; // conversation memory sent to Lexi
   final _picker = ImagePicker();
   File? _pendingImage;
   bool _isTyping = false;
@@ -60,8 +61,11 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
       setState(() {
         _messages.add({
           'role': 'lexi',
-          'text':
-              'Hi $_username! I\'m Lexi 🦉 I heard you want to practice your $_weakness. What shall we talk about?',
+          'data': {
+            'type': 'simple_answer',
+            'text':
+                'Hi $_username! I\'m Lexi 🦉 I heard you want to practice your $_weakness. What shall we talk about?',
+          },
         });
       });
     }
@@ -123,20 +127,38 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     _messageController.clear();
     _scrollToBottom();
 
+    final historyToSend = List<Map<String, String>>.from(_history);
+    if (text.isNotEmpty) {
+      _history.add({'role': 'user', 'text': text});
+    }
+
     final reply = await _apiService.chatWithLexi(
       text.isEmpty ? 'Please help me with this.' : text,
       3,
       imageBase64: imageB64,
+      history: historyToSend,
     );
 
     setState(() {
       _isTyping = false;
       _messages.add({
         'role': 'lexi',
-        'text': reply ?? 'Oops! My wings got tangled. Try again!',
+        'data': reply,
       });
     });
+    _history.add({'role': 'lexi', 'text': _replyToText(reply)});
+    if (_history.length > 20) _history.removeRange(0, _history.length - 20);
     _scrollToBottom();
+  }
+
+  /// A short plain-text version of a structured reply, for conversation memory.
+  String _replyToText(Map<String, dynamic> d) {
+    final parts = [
+      d['text'], d['meaning'], d['hint'], d['did_well'], d['tip'],
+      d['question'], d['check_question'], d['example'],
+    ].where((v) => v != null && v.toString().trim().isNotEmpty).map((v) => v.toString());
+    final joined = parts.join(' ');
+    return joined.isEmpty ? (d['type']?.toString() ?? '') : joined;
   }
 
   void _scrollToBottom() {
@@ -213,8 +235,13 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
                   return _buildTypingIndicator();
                 }
                 final msg = _messages[index];
+                if (msg['role'] == 'lexi') {
+                  return _buildLexiReply(
+                      (msg['data'] as Map).cast<String, dynamic>());
+                }
                 return _buildMessage(
-                    msg['role']!, msg['text'] ?? '', msg['image']);
+                    msg['role'] as String, msg['text'] as String? ?? '',
+                    msg['image'] as String?);
               },
             ),
           ),
@@ -308,6 +335,277 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
       ),
     );
   }
+
+  // ── Structured, kid-friendly Lexi replies ───────────────────────────────
+  Widget _buildLexiReply(Map<String, dynamic> d) {
+    final type = d['type'] as String? ?? 'simple_answer';
+    switch (type) {
+      case 'word_meaning':
+        return _lexiBubble(_wordMeaningCard(d));
+      case 'guiding_hint':
+        return _lexiBubble(_hintCard(d));
+      case 'writing_feedback':
+        return _lexiBubble(_feedbackCard(d));
+      case 'grammar_explanation':
+        return _lexiBubble(_grammarCard(d));
+      case 'practice_question':
+        return _lexiBubble(_practiceCard(d));
+      case 'reading_help':
+      case 'writing_ideas':
+      case 'example_generation':
+      case 'study_advice':
+        return _lexiBubble(_genericCard(d));
+      default:
+        return _lexiBubble(Text(
+          (d['text'] ?? '').toString(),
+          style: const TextStyle(
+              fontSize: 15,
+              color: _navyText,
+              fontWeight: FontWeight.w600,
+              height: 1.4),
+        ));
+    }
+  }
+
+  // grammar_explanation: topic, text, example, check_question
+  Widget _grammarCard(Map<String, dynamic> d) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if ((d['topic'] ?? '').toString().isNotEmpty)
+            Text((d['topic'] ?? '').toString(),
+                style: const TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w900, color: _navyText)),
+          if ((d['topic'] ?? '').toString().isNotEmpty)
+            const SizedBox(height: 6),
+          if ((d['text'] ?? '').toString().isNotEmpty)
+            Text((d['text'] ?? '').toString(),
+                style: const TextStyle(
+                    fontSize: 15, color: _navyText, fontWeight: FontWeight.w600, height: 1.4)),
+          if ((d['example'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _kv('Example', (d['example'] ?? '').toString(), italic: true),
+          ],
+          if ((d['check_question'] ?? '').toString().isNotEmpty)
+            _questionBox((d['check_question'] ?? '').toString()),
+        ],
+      );
+
+  // practice_question: question + hint (never the answer)
+  Widget _practiceCard(Map<String, dynamic> d) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('📝 Try this', style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w800, color: _buttonBlue)),
+          const SizedBox(height: 4),
+          Text((d['question'] ?? '').toString(),
+              style: const TextStyle(
+                  fontSize: 16, color: _navyText, fontWeight: FontWeight.w800, height: 1.35)),
+          if ((d['hint'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _kv('Hint', (d['hint'] ?? '').toString()),
+          ],
+        ],
+      );
+
+  // reading_help / writing_ideas / example_generation / study_advice
+  Widget _genericCard(Map<String, dynamic> d) {
+    final lists = <String>[];
+    for (final key in ['ideas', 'examples', 'tips']) {
+      final v = d[key];
+      if (v is List) lists.addAll(v.map((e) => e.toString()));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if ((d['text'] ?? '').toString().isNotEmpty)
+          Text((d['text'] ?? '').toString(),
+              style: const TextStyle(
+                  fontSize: 15, color: _navyText, fontWeight: FontWeight.w600, height: 1.4)),
+        if (lists.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...lists.map((item) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('• ', style: TextStyle(color: _buttonBlue, fontWeight: FontWeight.w900)),
+                  Expanded(
+                    child: Text(item,
+                        style: const TextStyle(
+                            fontSize: 15, color: _navyText, fontWeight: FontWeight.w600, height: 1.35)),
+                  ),
+                ]),
+              )),
+        ],
+        if ((d['tip'] ?? '').toString().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _kv('Tip', (d['tip'] ?? '').toString()),
+        ],
+        if ((d['question'] ?? '').toString().isNotEmpty)
+          _questionBox((d['question'] ?? '').toString()),
+      ],
+    );
+  }
+
+  Widget _questionBox(String q) => Container(
+        margin: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: _bg, borderRadius: BorderRadius.circular(12)),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('❓ ', style: TextStyle(fontSize: 16)),
+          Expanded(
+            child: Text(q,
+                style: const TextStyle(
+                    fontSize: 15, color: _buttonBlue, fontWeight: FontWeight.w800, height: 1.35)),
+          ),
+        ]),
+      );
+
+  Widget _lexiBubble(Widget child) => Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.82),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+              bottomLeft: Radius.circular(5),
+              bottomRight: Radius.circular(20),
+            ),
+            boxShadow: [
+              BoxShadow(
+                  color: _navyText.withValues(alpha: 0.04), blurRadius: 6),
+            ],
+          ),
+          child: child,
+        ),
+      );
+
+  Widget _kv(String label, String value, {bool italic = false}) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _buttonBlue)),
+            const SizedBox(height: 2),
+            Text(value,
+                style: TextStyle(
+                    fontSize: 15,
+                    color: _navyText,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                    fontStyle: italic ? FontStyle.italic : FontStyle.normal)),
+          ],
+        ),
+      );
+
+  Widget _wordMeaningCard(Map<String, dynamic> d) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic, children: [
+            Flexible(
+              child: Text((d['word'] ?? '').toString(),
+                  style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: _navyText)),
+            ),
+            const SizedBox(width: 8),
+            if ((d['pronunciation'] ?? '').toString().isNotEmpty)
+              Text('/${d['pronunciation']}/',
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: _navyText.withValues(alpha: 0.55),
+                      fontStyle: FontStyle.italic)),
+          ]),
+          const Divider(height: 18),
+          _kv('Meaning', (d['meaning'] ?? '').toString()),
+          _kv('When to use', (d['when_to_use'] ?? '').toString()),
+          _kv('Example', (d['example'] ?? '').toString(), italic: true),
+        ],
+      );
+
+  Widget _hintCard(Map<String, dynamic> d) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if ((d['detected_task'] ?? '').toString().isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                  color: _mintGreen.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20)),
+              child: Text('📷 ${d['detected_task'].toString().replaceAll('_', ' ')}',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w800, color: _mintGreen)),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('💡 ', style: TextStyle(fontSize: 18)),
+            Expanded(
+              child: Text((d['hint'] ?? '').toString(),
+                  style: const TextStyle(
+                      fontSize: 15, color: _navyText, fontWeight: FontWeight.w600, height: 1.35)),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: _bg, borderRadius: BorderRadius.circular(12)),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('❓ ', style: TextStyle(fontSize: 16)),
+              Expanded(
+                child: Text((d['question'] ?? '').toString(),
+                    style: const TextStyle(
+                        fontSize: 15,
+                        color: _buttonBlue,
+                        fontWeight: FontWeight.w800,
+                        height: 1.35)),
+              ),
+            ]),
+          ),
+        ],
+      );
+
+  Widget _feedbackRow(String emoji, String label, String value, Color color) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$emoji $label',
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w800, color: color)),
+            const SizedBox(height: 2),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 15,
+                    color: _navyText,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35)),
+          ],
+        ),
+      );
+
+  Widget _feedbackCard(Map<String, dynamic> d) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _feedbackRow('✅', 'You did well', (d['did_well'] ?? '').toString(),
+              _mintGreen),
+          _feedbackRow('✏️', 'Make it better',
+              (d['to_improve'] ?? '').toString(), _buttonBlue),
+          _feedbackRow('➡️', 'Next step', (d['next_step'] ?? '').toString(),
+              const Color(0xFFF9A825)),
+        ],
+      );
 
   Widget _buildMessage(String role, String text, [String? imageB64]) {
     final isLexi = role == 'lexi';

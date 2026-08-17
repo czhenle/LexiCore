@@ -129,8 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       _buildHomeView(),
       const StudyScheduleScreen(),
-      const ModuleSelectionScreen(),
       const AiChatbotScreen(),
+      const ModuleSelectionScreen(),
       const UserProfile(),
     ];
 
@@ -143,7 +143,11 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 0,
               centerTitle: false,
               automaticallyImplyLeading: false,
-              title: const Text(
+              title: Row(
+                children: [
+                Image.asset('assets/icon_image.png', width: 32, height: 32, fit: BoxFit.contain),
+              const SizedBox(width: 10),
+              const Text(
                 'LexiCore',
                 style: TextStyle(
                   fontWeight: FontWeight.w900,
@@ -151,6 +155,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   fontSize: 26,
                   letterSpacing: 0.5,
                 ),
+              ),
+              ],
               ),
               actions: [
                 // Notification / info icon
@@ -232,6 +238,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── My Learning: strengths / weaknesses / progress ──────────────────────
+  // Turns the internal ability/rung into a friendly, human-readable level.
+  String _levelWord(double overall) {
+    final avgRung = overall * 5;
+    if (avgRung < 1.5) return 'Just starting 🌱';
+    if (avgRung < 2.5) return 'Growing 🌿';
+    if (avgRung < 3.5) return 'Doing well 💪';
+    return 'Strong ⭐';
+  }
+
   Widget _buildLearningCard() {
     final s = _summary;
     final boxShadow = [
@@ -281,6 +296,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     fontSize: 16,
                     fontWeight: FontWeight.w900)),
           ]),
+          Padding(
+            padding: const EdgeInsets.only(top: 2, left: 28),
+            child: Text(_levelWord(s.overall),
+                style: TextStyle(
+                    color: _navyText.withValues(alpha: 0.65),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+          ),
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
@@ -460,15 +483,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
                           color: _navyText)),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Fun stories tailored to Level $_detectedLevel',
-                    style: TextStyle(
-                        fontSize: 13,
-                        color: _navyText.withValues(alpha: 0.6),
-                        fontWeight: FontWeight.w600,
-                        height: 1.3),
-                  ),
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.symmetric(

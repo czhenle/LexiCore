@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
+import '../home/home_screen.dart';
 import 'initial_assessment_screen.dart';
 
 class OnboardingProfileScreen extends StatefulWidget {
@@ -16,10 +18,6 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
     with SingleTickerProviderStateMixin {
   final _supabaseService = SupabaseService();
 
-  /// Username to greet with and save. Uses the value passed from Registration
-  /// when present, otherwise recovers it from the account (set at sign-up),
-  /// finally falling back to the email prefix. Keeps onboarding working whether
-  /// it's reached right after registration OR later from splash/login.
   String get _displayName {
     if (widget.username != null && widget.username!.isNotEmpty) {
       return widget.username!;
@@ -43,6 +41,13 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
   int _selectedStandard = 3;
   String _selectedStudyTime = '15 minutes';
   String _selectedAge = '9';
+  String _selectedGrade = ''; // required — no default baseline
+  final Map<String, String> _ratings = {
+    'Vocabulary': '',
+    'Grammar': '',
+    'Reading': '',
+    'Writing': '',
+  };
 
   bool _isSaving = false;
   String _errorMessage = '';
@@ -55,6 +60,8 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
   ];
   final List<String> _ages = ['7', '8', '9', '10', '11', '12'];
   final List<int> _standards = [1, 2, 3, 4, 5, 6];
+  final List<String> _grades = ['A', 'B', 'C', 'D', 'E', 'F'];
+  final List<String> _rates = ['1', '2', '3', '4', '5'];
 
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
@@ -77,6 +84,14 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
   }
 
   Future<void> _saveAndContinue() async {
+    if (_selectedGrade.isEmpty) {
+      setState(() => _errorMessage = 'Please pick your English grade.');
+      return;
+    }
+    if (_ratings.values.any((v) => v.isEmpty)) {
+      setState(() => _errorMessage = 'Please rate all four skills.');
+      return;
+    }
     setState(() {
       _isSaving = true;
       _errorMessage = '';
@@ -88,13 +103,11 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
         age: int.parse(_selectedAge),
         standard: _selectedStandard,
         studyTime: _selectedStudyTime,
+        grade: _selectedGrade,
+        rate: jsonEncode(_ratings),
       );
 
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const InitialAssessmentScreen()),
-        );
-      }
+      if (mounted) _askAssessment();
     } catch (e) {
       setState(
         () => _errorMessage = 'Failed to save profile. Please try again.',
@@ -102,6 +115,56 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  /// After profiling, let the student choose to take the test or skip.
+  void _askAssessment() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Quick Test?',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        content: const Text(
+          'Do you want to take a short test now so we can find your level?\n\n'
+          'You can skip and start learning right away.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context); // close dialog
+              await _supabaseService.seedMasteryFromGradeAndRatings(
+                grade: _selectedGrade,
+                ratings: _ratings.map(
+                  (k, v) => MapEntry(k, int.tryParse(v) ?? 3),
+                ),
+                standard: _selectedStandard,
+              );
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                );
+              }
+            },
+            child: const Text('Skip for now'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => const InitialAssessmentScreen(),
+                ),
+              );
+            },
+            child: const Text('Take the test'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -131,11 +194,57 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
                     ]),
                     const SizedBox(height: 16),
 
+                    // --- SECTION: English Grade (required) ---
+                    _section(Icons.school_rounded, 'Your English Grade', [
+                      const Text(
+                        'What was your last English exam grade?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: _textMid,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildGradeSelector(),
+                    ]),
+                    const SizedBox(height: 16),
+
+                    // --- SECTION: Self-Evaluation (required) ---
+                    _section(Icons.star_rounded, 'Self-Evaluation', [
+                      const Text(
+                        'How would you rate your English skills?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: _textMid,
+                        ),
+                      ),
+                      const Text(
+                        '1 = Beginner\n2 = Intermediate\n3 = Upper-Intermediate\n4 = Advanced\n5 = Proficient',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: _textMid,
+                        ),
+                      ),
+
+                      const SizedBox(height: 8),
+                      ..._rateRow('Vocabulary'),
+                      ..._rateRow('Grammar'),
+                      ..._rateRow('Reading'),
+                      ..._rateRow('Writing'),
+                    ]),
+                    const SizedBox(height: 16),
+
                     // --- SECTION 2: Daily Goal (Selectable Cards) ---
                     _section(Icons.access_time_rounded, 'Daily Goal', [
                       const Text(
                         'How long can you study each day?',
-                        style: TextStyle(fontSize: 13, color: _textMid),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: _textMid,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       _buildStudyTimeSelector(),
@@ -206,21 +315,6 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
               ),
             ),
             const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: _navyText,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                'Step 2 of 6',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 24),
@@ -235,7 +329,7 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
         ),
         const SizedBox(height: 6),
         Text(
-          "Let's personalise your learning journey.",
+          "Tell us about yourself.",
           style: TextStyle(
             fontSize: 15,
             color: _textMid,
@@ -377,6 +471,109 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
       ),
     ),
   );
+
+  // --- Self-Evaluation Rate Selector (1–5 stars) ---
+  // One labelled 1–5 rating row for a skill.
+  List<Widget> _rateRow(String skill) => [
+    const SizedBox(height: 12),
+    Text(skill, style: const TextStyle(fontSize: 12, color: _textMid)),
+    const SizedBox(height: 8),
+    _buildRateSelector(skill),
+  ];
+
+  Widget _buildRateSelector(String skill) => Wrap(
+    spacing: 10,
+    runSpacing: 10,
+    children: _rates.map((r) {
+      final sel = _ratings[skill] == r;
+      return GestureDetector(
+        onTap: () => setState(() => _ratings[skill] = r),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 48,
+          height: 48,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: sel ? _buttonBlue : _bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: sel ? _buttonBlue : _divider, width: 1.5),
+          ),
+          child: Text(
+            r,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: sel ? Colors.white : _navyText.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      );
+    }).toList(),
+  );
+
+  // --- English Grade Selector (A–F chips) ---
+  Widget _buildGradeSelector() {
+    // Split the grades list in half
+    final int half = (_grades.length / 2).ceil();
+    final firstHalf = _grades.take(half).toList();
+    final secondHalf = _grades.skip(half).toList();
+
+    // Helper function to build a single row
+    Widget buildRow(List<String> rowGrades) {
+      return Wrap(
+        spacing: 10,
+        children: rowGrades.map((g) {
+          final sel = _selectedGrade == g;
+          return GestureDetector(
+            onTap: () => setState(() => _selectedGrade = g),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 48,
+              height: 48,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: sel ? _buttonBlue : _bg,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: sel ? _buttonBlue : _divider,
+                  width: 1.5,
+                ),
+              ),
+              child: Text(
+                g,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: sel ? Colors.white : _navyText.withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      );
+    }
+
+    // Stack the two rows vertically
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment
+          .start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            buildRow(firstHalf),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            buildRow(secondHalf),
+          ],
+        )
+      ],
+    );
+  }
 
   // --- Realistic Goal Selector (from user_profiling_screen) ---
   Widget _buildStudyTimeSelector() => Column(

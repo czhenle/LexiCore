@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/supabase_service.dart';
 import '../login_and_registration/login_screen.dart';
 import '../user_profiling/onboarding_profile_screen.dart';
@@ -14,24 +15,27 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-
   static const Color _skyBlueLight = Color(0xFFDFF1FF);
-  static const Color _skyBlueDark  = Color(0xFF7AC9FA);
-  static const Color _navyText     = Color(0xFF003C8F);
-  static const Color _starYellow   = Color(0xFFFFD54F);
+  static const Color _skyBlueDark = Color(0xFF7AC9FA);
+  static const Color _navyText = Color(0xFF003C8F);
+  static const Color _starYellow = Color(0xFFFFD54F);
 
   late final AnimationController _animCtrl;
-  late final Animation<double>   _fadeAnim;
-  late final Animation<double>   _scaleAnim;
+  late final Animation<double> _fadeAnim;
+  late final Animation<double> _scaleAnim;
 
   @override
   void initState() {
     super.initState();
     _animCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1000));
-    _fadeAnim  = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
-    _scaleAnim = Tween<double>(begin: 0.7, end: 1.0).animate(
-        CurvedAnimation(parent: _animCtrl, curve: Curves.elasticOut));
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
+    _scaleAnim = Tween<double>(
+      begin: 0.7,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _animCtrl, curve: Curves.elasticOut));
     _animCtrl.forward();
     _navigate();
   }
@@ -44,25 +48,37 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _navigate() async {
     await Future.delayed(const Duration(milliseconds: 1800)); // brand moment
-
-    // No longer signs the user out on every launch — sessions now persist.
     if (!mounted) return;
 
+    final session = Supabase.instance.client.auth.currentSession;
+
     // Not logged in -> login screen.
-    if (Supabase.instance.client.auth.currentSession == null) {
+    if (session == null) {
       _replace(const AuthScreen());
       return;
     }
-    // Logged in -> Home if already onboarded, else finish onboarding first.
+
+    // Logged in but did NOT tick "Remember me" -> sign out, show login.
+    final prefs = await SharedPreferences.getInstance();
+    final remember = prefs.getBool('remember_me') ?? false;
+    if (!remember) {
+      await Supabase.instance.client.auth.signOut();
+      if (!mounted) return;
+      _replace(const AuthScreen());
+      return;
+    }
+
+    // Remembered + valid session -> straight in (Home, or finish onboarding).
     final profile = await SupabaseService().getStudentProfile();
     if (!mounted) return;
-    _replace(profile == null
-        ? const OnboardingProfileScreen()
-        : const HomeScreen());
+    _replace(
+      profile == null ? const OnboardingProfileScreen() : const HomeScreen(),
+    );
   }
 
-  void _replace(Widget page) => Navigator.of(context)
-      .pushReplacement(MaterialPageRoute(builder: (_) => page));
+  void _replace(Widget page) => Navigator.of(
+    context,
+  ).pushReplacement(MaterialPageRoute(builder: (_) => page));
 
   @override
   Widget build(BuildContext context) {
@@ -78,24 +94,50 @@ class _SplashScreenState extends State<SplashScreen>
         child: Stack(
           children: [
             // --- Decorative Background Stars ---
-            const Positioned(top: 80, left: 50, child: Icon(Icons.star_rounded, color: _starYellow, size: 30)),
-            const Positioned(top: 150, right: 60, child: Icon(Icons.star_rounded, color: _starYellow, size: 20)),
-            const Positioned(bottom: 200, left: 80, child: Icon(Icons.star_rounded, color: Colors.white, size: 25)),
-            const Positioned(bottom: 300, right: 40, child: Icon(Icons.star_rounded, color: _starYellow, size: 40)),
+            const Positioned(
+              top: 80,
+              left: 50,
+              child: Icon(Icons.star_rounded, color: _starYellow, size: 30),
+            ),
+            const Positioned(
+              top: 150,
+              right: 60,
+              child: Icon(Icons.star_rounded, color: _starYellow, size: 20),
+            ),
+            const Positioned(
+              bottom: 200,
+              left: 80,
+              child: Icon(Icons.star_rounded, color: Colors.white, size: 25),
+            ),
+            const Positioned(
+              bottom: 300,
+              right: 40,
+              child: Icon(Icons.star_rounded, color: _starYellow, size: 40),
+            ),
 
             // --- Fluffy Cloud Accents (Bottom) ---
             Positioned(
-              bottom: -50, left: -50,
+              bottom: -50,
+              left: -50,
               child: Container(
-                width: 200, height: 200,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.6)),
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.6),
+                ),
               ),
             ),
             Positioned(
-              bottom: -80, right: -30,
+              bottom: -80,
+              right: -30,
               child: Container(
-                width: 250, height: 250,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.8)),
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.8),
+                ),
               ),
             ),
 
@@ -108,18 +150,14 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 💡 PRO TIP: Once you add your image to your assets folder, 
-                      // replace this Container with: Image.asset('assets/your_icon.png', width: 140)
-                      Container(
-                        width: 140, height: 140,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          boxShadow: [
-                            BoxShadow(color: _navyText.withValues(alpha: 0.15), blurRadius: 30, spreadRadius: 5),
-                          ],
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.asset(
+                          'assets/icon_image.png',
+                          width: 140,
+                          height: 140,
+                          fit: BoxFit.cover,
                         ),
-                        child: const Icon(Icons.school_rounded, size: 70, color: _skyBlueDark),
                       ),
                       const SizedBox(height: 24),
 
@@ -137,7 +175,7 @@ class _SplashScreenState extends State<SplashScreen>
 
                       // Subtitle
                       const Text(
-                        'AI English Learning',
+                        'AI-Powered English Learning Assistant',
                         style: TextStyle(
                           fontSize: 16,
                           color: _navyText,
@@ -153,13 +191,16 @@ class _SplashScreenState extends State<SplashScreen>
 
             // --- Bottom Loader ---
             Positioned(
-              bottom: 80, left: 0, right: 0,
+              bottom: 80,
+              left: 0,
+              right: 0,
               child: FadeTransition(
                 opacity: _fadeAnim,
                 child: Column(
                   children: [
                     const SizedBox(
-                      width: 30, height: 30,
+                      width: 30,
+                      height: 30,
                       child: CircularProgressIndicator(
                         color: _navyText,
                         strokeWidth: 3.0,

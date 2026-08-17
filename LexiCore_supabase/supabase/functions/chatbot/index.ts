@@ -4,7 +4,6 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -12,15 +11,40 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-// Clean and normalise the incoming message so minor formatting issues
-// (missing punctuation, extra spaces, mixed case) don't confuse the model
+const MAX_MESSAGE_LENGTH = 3000;
+const MAX_HISTORY = 10;
+
+const VALID_TYPES = new Set([
+  "word_meaning",
+  "grammar_explanation",
+  "reading_help",
+  "guiding_hint",
+  "writing_feedback",
+  "writing_ideas",
+  "example_generation",
+  "practice_question",
+  "study_advice",
+  "simple_answer",
+]);
+
+// Just tidy whitespace — don't change the student's actual words.
 function normaliseMessage(raw: string): string {
-  let msg = raw.trim();
-  // Add a full stop if the message ends without punctuation
-  if (msg.length > 0 && !/[.!?]$/.test(msg)) {
-    msg = msg + ".";
+  return raw.trim().replace(/\s+/g, " ");
+}
+
+function modePrompt(mode: string): string {
+  switch (mode) {
+    case "homework":
+      return "MODE — Homework: give hints and guiding questions only. NEVER the final answer.";
+    case "practice":
+      return "MODE — Practice: ask ONE question, then wait. When the student answers, gently say if it's right and why.";
+    case "revision":
+      return "MODE — Revision: a short reminder of the idea, then one quick check question.";
+    case "teach":
+      return "MODE — Teach: explain simply, give ONE example, then ask ONE check question.";
+    default:
+      return "MODE — Auto: choose the most helpful way to respond based on what the student needs.";
   }
-  return msg;
 }
 
 Deno.serve(async (req) => {
@@ -29,81 +53,144 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const {
-      message       = "",
-      standard      = 3,
+      message = "",
+      history = [],
+      mode = "auto",
+      standard = 3,
       detected_level = 3,
-      weakness      = "Grammar",
-      vocab_score   = 0,
+      weakness = "Grammar",
+      vocab_score = 0,
       grammar_score = 0,
       reading_score = 0,
       writing_score = 0,
-      image         = null,
+      topic = "",
+      learningObjective = "",
+      image = null,
     } = body;
 
-    // Normalise message — adds punctuation if missing so model parses it reliably
     const cleanMessage = normaliseMessage(String(message));
 
-    if ((!cleanMessage || cleanMessage === ".") && !image) {
-      return jsonResponse({ reply: "I didn't catch that! Can you type your question or send a photo? 😊" });
+    if (!cleanMessage && !image) {
+      return jsonResponse({
+        reply: { type: "simple_answer", text: "I didn't catch that! Type a question or send a photo. 😊" },
+      });
+    }
+    if (cleanMessage.length > MAX_MESSAGE_LENGTH) {
+      return jsonResponse({
+        reply: { type: "simple_answer", text: "That message is a little too long. Please send a shorter question. 😊" },
+      }, 400);
     }
 
     const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
     const imageDataUrl = image
-      ? (String(image).startsWith("data:")
-          ? String(image)
-          : `data:image/jpeg;base64,${image}`)
+      ? (String(image).startsWith("data:") ? String(image) : `data:image/jpeg;base64,${image}`)
       : null;
 
-    const systemPrompt = `You are Lexi, a warm and encouraging English tutor for Malaysian primary school students.
+    // Prompt sections (easier to maintain than one giant string).
+    const BASE = `You are Lexi, a warm, patient English tutor for Malaysian primary school children.
+You are a GUIDE, not an answer machine.`;
 
-      Student profile:
-      - School standard: ${standard}
-      - Current ability level: ${detected_level}
-      - Weakest skill: ${weakness}
-      - Skill scores — Vocabulary: ${vocab_score}%, Grammar: ${grammar_score}%, Reading: ${reading_score}%, Writing: ${writing_score}%
+    const rules = `HOW TO DECIDE WHAT TO DO:
+- If the student wants to LEARN a concept (e.g. "what is a noun?") — explain it simply.
+- If the student wants the FINAL ANSWER to homework/an exercise — do NOT give it; give a hint and a guiding question.
+- If the student shows THEIR OWN attempt (e.g. "I think it's 'went', is that right?") — give feedback and guide them, don't just replace their answer.
+- Prefer ONE guiding question at a time; wait for their reply before the next hint.
+- Never write a full essay or draft for them — help them plan instead.`;
 
-      Your personality and behaviour:
-      1. Always respond in simple, friendly English suitable for a Standard ${detected_level} student
-      2. Understand the INTENT of what the student is saying — even if their sentence is incomplete, has no punctuation, or has grammar mistakes. Focus on what they MEAN, not how perfectly they wrote it.
-      3. If the student writes something like "Although it rained I still need go school" — understand they want help with grammar/conjunction usage and respond helpfully
-      4. When explaining grammar or vocabulary, always give a clear example sentence at Standard ${detected_level} level
-      5. If the student asks about ${weakness}, give extra encouragement and step-by-step help
-      6. Keep responses short and friendly — 3 to 5 sentences maximum unless they ask for more detail
-      7. End every response with either a helpful follow-up question OR a word of encouragement
-      8. Never use complicated vocabulary the student wouldn't know at Standard ${detected_level} level
-      9. If the student's message contains a grammar mistake, gently point it out at the END of your response with a small tip — never make them feel bad about it
-      10. If you genuinely cannot understand what the student means, ask ONE simple clarifying question like "Can you tell me a little more about what you need help with?"
+    const profile = `STUDENT PROFILE (use to set difficulty — do NOT claim to follow any official syllabus):
+- School standard: ${standard}
+- English level: ${detected_level}
+- Weakest skill: ${weakness}
+- Scores — Vocabulary ${vocab_score}/100, Grammar ${grammar_score}/100, Reading ${reading_score}/100, Writing ${writing_score}/100
+Match your difficulty to this level and give extra support in ${weakness}.`;
 
-      Remember: You are patient, kind, and always make the student feel capable and supported.`;
-
-    const visionNote = imageDataUrl
-      ? "\n\nThe student has uploaded a PHOTO. If it shows their own writing, give kind, specific feedback (one thing they did well + one thing to improve). If it shows a question, help them understand and work it out step by step — guide them, don't just hand over the answer."
+    const lesson = (topic || learningObjective)
+      ? `LESSON CONTEXT: topic="${topic}", objective="${learningObjective}". Keep help relevant to this.`
       : "";
 
-   const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] | string =
-  imageDataUrl
-    ? [
-        { type: "text", text: cleanMessage === "." ? "Please look at my photo and help me." : cleanMessage },
-        { type: "image_url", image_url: { url: imageDataUrl } },
-      ]
-    : cleanMessage;
+    const style = `STYLE:
+- Simple words and short sentences a Standard ${standard} child understands.
+- British English spelling (colour, centre, favourite, organise).
+- Examples familiar to Malaysian children. Be warm; praise effort; never shame mistakes.`;
 
-    const response = await openai.chat.completions.create({
-      model:      "gpt-4o-mini",
-      messages:   [
-        { role: "system", content: systemPrompt + visionNote },
-        { role: "user",   content: userContent as any},
-      ],
-      temperature: 0.75,
+    const safety = `CHILD SAFETY: You are talking to a child. Never ask for full name, home address, phone number, passwords, school login, exact location, or private family details, and don't encourage sharing them. If the student raises an unsafe or grown-up topic, keep your reply short and kindly suggest they talk to a trusted adult (parent or teacher).`;
+
+    const schema = `Reply with ONE JSON object and NOTHING ELSE. Pick exactly one "type" and fill only its fields:
+- word_meaning: {"type","word","pronunciation","meaning","when_to_use","example"}
+- grammar_explanation: {"type","topic","text","example","check_question"}
+- reading_help: {"type","text","tip","question"}
+- guiding_hint: {"type","hint","question"}
+- writing_feedback: {"type","did_well","to_improve","next_step"}
+- writing_ideas: {"type","text","ideas":["...","..."]}
+- example_generation: {"type","text","examples":["...","..."]}
+- practice_question: {"type","question","hint"}
+- study_advice: {"type","text","tips":["...","..."]}
+- simple_answer: {"type","text"}
+Keep every field short and simple.`;
+
+    const imagePrompt = imageDataUrl
+      ? `The student sent a PHOTO. Work out what it is (worksheet, textbook page, handwritten answer, essay, grammar exercise, reading passage, or multiple-choice question) and add a "detected_task" field with that label. If it is their own writing use writing_feedback; if it is a question/exercise use guiding_hint. Never give the completed answer.`
+      : "";
+
+    const instructions = [BASE, rules, profile, lesson, style, safety, modePrompt(mode), schema, imagePrompt]
+      .filter(Boolean)
+      .join("\n\n");
+
+    // Conversation history (last N turns).
+    const recent = Array.isArray(history) ? history.slice(-MAX_HISTORY) : [];
+    const historyInput = recent
+      .filter((h: any) => h && typeof h.text === "string" && h.text.trim().length > 0)
+      .map((h: any) => {
+        const isLexi = h.role === "lexi" || h.role === "assistant";
+        return {
+          role: isLexi ? "assistant" : "user",
+          content: [{ type: isLexi ? "output_text" : "input_text", text: String(h.text) }],
+        };
+      });
+
+    // Current user turn (word "json" satisfies the json_object format rule).
+    const userText = (cleanMessage === "" ? "Please look at my photo and help me." : cleanMessage) +
+      "\n\n(Reply as JSON.)";
+    const userContent = imageDataUrl
+      ? [
+          { type: "input_text", text: userText },
+          { type: "input_image", image_url: imageDataUrl },
+        ]
+      : [{ type: "input_text", text: userText }];
+
+    const input = [...historyInput, { role: "user", content: userContent }];
+
+    const response = await openai.responses.create({
+      model: "gpt-5.6-luna",
+      instructions,
+      input: input as any,
+      reasoning: { effort: "low" },
+      text: { format: { type: "json_object" } },
     });
 
-    const reply = response.choices[0]?.message?.content?.trim() ??
-                  "Hmm, I had a little trouble with that! Could you try asking me again? 😊";
+    const raw = (response.output_text as string | undefined)?.trim() ?? "";
+
+    // Validate structure, not just JSON-ness.
+    let reply: any;
+    try {
+      reply = JSON.parse(raw);
+    } catch {
+      reply = null;
+    }
+    if (!reply || typeof reply !== "object" || !("type" in reply) || !VALID_TYPES.has(reply.type)) {
+      reply = {
+        type: "simple_answer",
+        text: "I'm not sure how to help with that yet. Can you ask in a different way? 😊",
+      };
+    }
 
     return jsonResponse({ reply });
-
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return jsonResponse({ error: message }, 500);
+    // Log details server-side; return a safe, generic message to the client.
+    console.error("Lexi error:", error);
+    return jsonResponse({
+      error: "LEXI_ERROR",
+      message: "Lexi is having trouble right now. Please try again in a moment. 😊",
+    }, 500);
   }
 });
