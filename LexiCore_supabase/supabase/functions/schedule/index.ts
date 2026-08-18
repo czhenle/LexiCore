@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
       : "";
 
     const prompt = `
-      You are an expert English curriculum planner for Malaysian primary school students (KSSR syllabus).
+      You are an expert English curriculum planner for Malaysian primary school students.
 
       Student profile:
       - School standard: ${standard}
@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
       Create a structured 4-week English learning plan:
       1. Allocate MORE time to the weakest skill (${weakness})
       2. Build on the strongest skill (${strength}) with advanced tasks
-      3. Follow KSSR progression: simple → complex
+      3. Progress from simple to complex tasks
       4. Daily tasks must fit within ${study_time} per day
       5. Use specific topics, not vague descriptions
 
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
       }`;
 
     const response = await openai.chat.completions.create({
-      model:           "gpt-4o-mini",
+      model:           "gpt-5.6-luna",
       messages:        [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       temperature:     0.7,

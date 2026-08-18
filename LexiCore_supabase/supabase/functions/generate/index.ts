@@ -32,8 +32,8 @@ function json(data: unknown, status = 200) {
 }
 
 // Cheap, reliable generator; a slightly stronger, independent verifier.
-const GENERATOR_MODEL = "gpt-4.1-mini";
-const VERIFIER_MODEL  = "gpt-4.1-mini"; // swap to a stronger model for stricter QA
+const GENERATOR_MODEL = "gpt-5.6-luna";
+const VERIFIER_MODEL  = "gpt-5.6-luna"; // swap to a stronger model for stricter QA
 const MAX_ATTEMPTS = 3;
 
 // Rung intent — keeps the prompt aligned to the pedagogical ladder.
@@ -46,10 +46,41 @@ const RUNG_INTENT: Record<number, string> = {
 };
 
 // Which formats are choice-based (need options + a key) vs open (AI-graded).
+// Rungs 1-3 are scaffolded by design (RUNG_INTENT above literally calls rung 3
+// "guided production with scaffolds (word bank / gap fill)") so those formats
+// are choice-shaped too, just with option semantics that vary by format family
+// — see FORMAT_HINT below. Only the genuinely free-production rung-4/5 formats
+// stay open.
 const CHOICE_FORMATS = new Set([
   "meaning_match", "mcq_word_meaning", "mcq_literal", "mcq_inference",
   "mcq_identify_or_error", "sentence_complete",
+  "worked_example", "vocab_preview", "punctuation_fix",
+  "cloze_sentence_wordbank", "gap_fill", "sequence_order",
+  "sentence_combine", "transform_or_reorder",
 ]);
+
+// How to phrase the 4 options for choice formats whose options AREN'T just
+// "4 independent answer candidates" — e.g. a word bank fill vs. a full
+// re-ordered sentence need different option semantics spelled out, or the
+// model defaults to plain MCQ phrasing that doesn't fit the format.
+const FORMAT_HINT: Record<string, string> = {
+  worked_example:
+    "Show a worked example first, then ask a simple recognition question about it. Options are 4 answer candidates.",
+  vocab_preview:
+    "Introduce one key word with its meaning, then ask a simple recognition question about it. Options are 4 answer candidates.",
+  punctuation_fix:
+    "The question is a sentence with a punctuation/capitalisation issue. Options are 4 candidate corrected versions of the sentence — only one is fully correct.",
+  cloze_sentence_wordbank:
+    "The question is a sentence with a blank. Options are 4 word-bank candidates to fill the blank — only one fits both grammar and meaning.",
+  gap_fill:
+    "The question is a sentence or short passage with a blank. Options are 4 candidate words/phrases to fill the blank.",
+  sequence_order:
+    "The question gives a jumbled set of words or sentences. Options are 4 candidate full orderings — only one is correct, not individual words.",
+  sentence_combine:
+    "The question gives two short sentences to combine into one. Options are 4 candidate combined sentences — only one is grammatically correct.",
+  transform_or_reorder:
+    "The question asks to transform a sentence (e.g. tense/voice change) or reorder it. Options are 4 candidate transformed/reordered sentences.",
+};
 
 interface GenParams {
   skill: string; sub_skill: string; sub_skill_name: string;
@@ -72,10 +103,12 @@ function buildPrompt(p: GenParams): string {
     ? `\nThe student RECENTLY got these wrong — target the same weakness:\n- ${p.recent_errors!.join("\n- ")}`
     : "";
   const shape = CHOICE_FORMATS.has(p.format)
-    ? `Return options A-D and the correct_answer letter. Exactly ONE option is correct. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.`
+    ? `Return options A-D and the correct_answer letter. Exactly ONE option is correct. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.${
+        FORMAT_HINT[p.format] ? ` ${FORMAT_HINT[p.format]}` : ""
+      }`
     : `This is an OPEN item the student writes. Provide a model "answer" and an "explanation". Do NOT provide multiple-choice options.`;
 
-  return `You are a KSSR English item-writer for Malaysian primary school.
+  return `You are an English item-writer for a Malaysian primary-school learner.
 Write ONE item that EXACTLY matches this specification:
 - Skill: ${p.skill}
 - Sub-skill: ${p.sub_skill_name} (${p.sub_skill})

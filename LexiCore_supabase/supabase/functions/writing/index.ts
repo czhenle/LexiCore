@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
       exercise_type = "completion",
     } = await req.json();
 
-    const llm           = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.7 });
+    const llm           = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.7 });
     const structuredLlm = llm.withStructuredOutput(writingSchema);
 
     // ── Prompts per exercise type ────────────────────────────────────────────
@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
         Options: A=They buyed carrots and tomatoes. B=They bought fresh carrots and tomatoes. C=They has carrots. D=Market was open.`,
     };
 
-    const systemPrompt = `You are a KSSR English Writing Teacher for Standard ${standard}.
+    const systemPrompt = `You are an English writing teacher for Standard ${standard}.
       Vocabulary and sentence complexity should be appropriate for Standard ${standard} students (age ${standard + 6}).
       All exercises should be educational, relevant to Malaysian primary school students, and focused on improving writing skills.`;
 

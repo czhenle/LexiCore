@@ -82,11 +82,11 @@ Deno.serve(async (req) => {
     const level   = Math.min(Math.max(Number(standard), 1), 6);
     const profile = levelProfiles[level] ?? levelProfiles[3];
 
-    const llm           = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.7 });
+    const llm           = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.7 });
     const structuredLlm = llm.withStructuredOutput(grammarSchema);
 
     const prompt = ChatPromptTemplate.fromMessages([
-      ["system", `You are a KSSR English Teacher creating grammar questions for Standard ${level} students.
+      ["system", `You are an English teacher creating grammar questions for Standard ${level} students.
 
         DIFFICULTY LEVEL: Standard ${level} out of 6
         Sentence complexity: ${profile.description}

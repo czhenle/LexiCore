@@ -21,7 +21,7 @@ function json(data: unknown, status = 200) {
   });
 }
 
-const MODEL = "gpt-4.1-mini";
+const MODEL = "gpt-5.6-luna";
 
 const SYSTEM = `You are Lexi, a warm, patient tutor for Malaysian primary school
 children (ages 7-12) learning English. You use the SOCRATIC method and

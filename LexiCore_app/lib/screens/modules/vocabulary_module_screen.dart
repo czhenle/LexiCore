@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
+import '../../services/mastery_service.dart';
 import '../../data/curriculum.dart';
 import 'result_screen.dart';
 import 'dart:convert';
@@ -361,6 +362,13 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
         unitNumber: _currentUnit.unitNumber,
         topic: _currentUnit.topic,
         score: score,
+      );
+      await MasteryService().recordLegacyQuizCompletion(
+        skill: 'Vocabulary',
+        topic: _currentUnit.topic,
+        correctness: List.generate(
+            _questions.length, (i) => _answers[i] == _questions[i]['correct_answer']),
+        standard: _detectedLevel,
       );
     } catch (e) {
       debugPrint('Save error: $e');

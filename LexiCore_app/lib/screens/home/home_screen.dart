@@ -41,10 +41,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _username      = '';
   int    _detectedLevel = 3;
-  int    _vocabScore    = 0;
-  int    _grammarScore  = 0;
-  int    _readingScore  = 0;
-  int    _writingScore  = 0;
   bool   _isLoading     = true;
 
   // Today's task from schedule (if saved)
@@ -65,10 +61,6 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _username      = (profile?['username']         as String?) ?? 'Student';
           _detectedLevel = (assessment?['detected_level'] as int?)   ?? 3;
-          _vocabScore    = (assessment?['vocabulary_score'] as int?)  ?? 0;
-          _grammarScore  = (assessment?['grammar_score']   as int?)   ?? 0;
-          _readingScore  = (assessment?['reading_score']   as int?)   ?? 0;
-          _writingScore  = (assessment?['writing_score']   as int?)   ?? 0;
           _summary       = summary;
           _isLoading     = false;
         });
@@ -79,22 +71,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Live per-skill score (0-100) from the mastery map, the same source of
+  /// truth `_buildLearningCard()` already uses — falls back to 0 until the
+  /// student has any skill_mastery data yet.
+  double _liveScore(String skill) {
+    final avg = _summary?.avgRungBySkill[skill];
+    return avg == null ? 0 : avg / 5 * 100;
+  }
+
   String get _weaknessSkill {
     final scores = {
-      'Vocabulary': _vocabScore,
-      'Grammar':    _grammarScore,
-      'Reading':    _readingScore,
-      'Writing':    _writingScore,
+      for (final s in const ['Vocabulary', 'Grammar', 'Reading', 'Writing'])
+        s: _liveScore(s),
     };
     return scores.entries.reduce((a, b) => a.value <= b.value ? a : b).key;
   }
 
   String get _strengthSkill {
     final scores = {
-      'Vocabulary': _vocabScore,
-      'Grammar':    _grammarScore,
-      'Reading':    _readingScore,
-      'Writing':    _writingScore,
+      for (final s in const ['Vocabulary', 'Grammar', 'Reading', 'Writing'])
+        s: _liveScore(s),
     };
     return scores.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
   }
@@ -396,11 +392,14 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Skill score bars with Candy Colors!
-          _scoreBar('Vocabulary', _vocabScore,  _brightOrange),
-          _scoreBar('Grammar',    _grammarScore, _mintGreen),
-          _scoreBar('Reading',    _readingScore, _lightblue),
-          _scoreBar('Writing',    _writingScore, _coralRed),
+          // Skill score bars with Candy Colors! Sourced from the live mastery
+          // map (same source as the learning card above) rather than the
+          // static one-time assessment score, so this never drifts out of
+          // sync with actual practice.
+          _scoreBar('Vocabulary', _liveScore('Vocabulary').round(), _brightOrange),
+          _scoreBar('Grammar',    _liveScore('Grammar').round(),    _mintGreen),
+          _scoreBar('Reading',    _liveScore('Reading').round(),    _lightblue),
+          _scoreBar('Writing',    _liveScore('Writing').round(),    _coralRed),
           const SizedBox(height: 16),
 
           // Divider

@@ -24,6 +24,12 @@
 
 import 'dart:math' as math;
 
+/// Content is never hard-locked by standard — always visible and selectable —
+/// but a soft "this might be a bit challenging" alert should be shown when a
+/// student below a sub-skill's recommended starting standard picks it.
+bool needsChallengeAlert(int studentStandard, int subSkillStandardMin) =>
+    studentStandard < subSkillStandardMin;
+
 /// Universal 5-rung mastery ladder (same shape for every skill).
 enum Rung {
   understand(1, 'Understand'),   // receptive exposure

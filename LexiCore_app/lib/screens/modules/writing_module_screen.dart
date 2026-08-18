@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
+import '../../services/mastery_service.dart';
 import '../../data/curriculum.dart';
 import 'result_screen.dart';
 
@@ -313,6 +314,13 @@ class _WritingQuizScreenState extends State<WritingQuizScreen> {
         unitNumber: _currentUnit.unitNumber,
         topic:      _currentUnit.topic,
         score:      score,
+      );
+      await MasteryService().recordLegacyQuizCompletion(
+        skill: 'Writing',
+        topic: _currentUnit.topic,
+        correctness: List.generate(
+            _questions.length, (i) => _answers[i] == _questions[i]['correct_answer']),
+        standard: _detectedLevel,
       );
     } catch (e) {
       debugPrint('Save writing error: $e');

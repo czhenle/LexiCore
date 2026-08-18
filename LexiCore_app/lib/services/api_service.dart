@@ -209,7 +209,7 @@ class ApiService {
           'grammar_score':  grammarScore,
           'reading_score':  readingScore,
           'writing_score':  writingScore,
-          'modifier': ?modifier,
+          if (modifier != null) 'modifier': modifier,
         }),
       );
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -272,8 +272,4 @@ class ApiService {
     }
   }
 
-}
-
-extension on http.Response {
-  get statusCode => null;
 }

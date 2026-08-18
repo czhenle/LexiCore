@@ -82,23 +82,28 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { standard = 3, mode = "meaning" } = await req.json();
-    // topic is intentionally ignored — we use the random word pool instead
+    const { standard = 3, mode = "meaning", topic } = await req.json();
 
     const level = Math.min(Math.max(Number(standard), 1), 6);
     const wordPool = wordPoolByLevel[level] ?? wordPoolByLevel[3];
+    // If the caller asked for a topic, steer word selection toward it while
+    // keeping the broader pool as a fallback so variety is never lost.
+    const poolInstruction =
+      typeof topic === "string" && topic.trim().length > 0
+        ? `Prefer words related to "${topic.trim()}" where natural, but you may also draw from this broader pool: ${wordPool}.`
+        : `Pick from this broad pool: ${wordPool}.`;
 
-    const llm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.9 });
+    const llm = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.9 });
 
     // ── IMAGE MODE ───────────────────────────────────────────────────────────
     if (mode === "image") {
       const structuredLlm = llm.withStructuredOutput(imageSchema);
       const prompt = ChatPromptTemplate.fromMessages([
-        ["system", `You are a KSSR English Teacher for Standard ${level}.`],
+        ["system", `You are an English teacher for Standard ${level} learners.`],
         [
           "human",
-          `Create 5 vocabulary multiple-choice questions. 
-          Each question shows a different word from this broad pool: ${wordPool}.
+          `Create 5 vocabulary multiple-choice questions.
+          ${poolInstruction}
           Pick 5 DIFFERENT words — do NOT use the same topic twice.
           Each question asks "What is this?" and shows an image.
           The image_keyword must be a single concrete noun that DALL-E can illustrate clearly (e.g. "umbrella", "bicycle", "mango").
@@ -136,11 +141,11 @@ Deno.serve(async (req) => {
     if (mode === "meaning") {
       const structuredLlm = llm.withStructuredOutput(baseSchema);
       const prompt = ChatPromptTemplate.fromMessages([
-        ["system", `You are a KSSR English Teacher for Standard ${level}.`],
+        ["system", `You are an English teacher for Standard ${level} learners.`],
         [
           "human",
-          `Create 5 vocabulary questions. 
-          Pick 5 DIFFERENT words from this broad pool: ${wordPool}.
+          `Create 5 vocabulary questions.
+          ${poolInstruction}
           Do NOT restrict to one topic — mix different categories freely.
           Each question gives a definition and asks which word matches.
           Example: "Which word means moving very fast?" A) slow B) quick C) heavy D) quiet
@@ -157,7 +162,7 @@ Deno.serve(async (req) => {
       const prompt = ChatPromptTemplate.fromMessages([
         [
           "system",
-          `You are an experienced KSSR English Teacher designing vocabulary-in-context exercises for Standard ${level} students.
+          `You are an experienced English teacher designing vocabulary-in-context exercises for Standard ${level} students.
           Your goal is to help students:
           1. Distinguish between commonly confused or similar-meaning words (e.g. "fast" vs "quick", "big" vs "large", "happy" vs "glad")
           2. Understand how word choice changes meaning depending on situation or context
@@ -168,7 +173,7 @@ Deno.serve(async (req) => {
           `Create 5 vocabulary-in-context fill-in-the-blank questions for Standard ${level} students.
 
           WORD SELECTION:
-          - Pick 5 DIFFERENT words from this pool: ${wordPool}
+          - ${poolInstruction}
           - Prioritise words that have common near-synonyms or are frequently misused at Standard ${level} level
           - Vary the word categories — do NOT pick multiple words from the same topic
 

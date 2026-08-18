@@ -9,12 +9,39 @@ class MasteryService {
   String? get _uid => _sb.auth.currentUser?.id;
 
   List<Map<String, dynamic>>? _taxonomy;
+  Map<String, Map<int, String>>? _rungFormats;
 
-  /// Sub-skill taxonomy: [{code, skill, name}]. Cached after first load.
+  /// Sub-skill taxonomy: [{code, skill, name, standard_min, standard_max,
+  /// sort_order}]. Cached after first load.
   Future<List<Map<String, dynamic>>> taxonomy() async {
-    _taxonomy ??= List<Map<String, dynamic>>.from(
-        await _sb.from('sub_skills').select('code, skill, name'));
+    _taxonomy ??= List<Map<String, dynamic>>.from(await _sb
+        .from('sub_skills')
+        .select('code, skill, name, standard_min, standard_max, sort_order'));
     return _taxonomy!;
+  }
+
+  /// Rung -> format per skill, sourced from the `rung_formats` table (the
+  /// single source of truth this mirrors — see AdaptivePracticeScreen's
+  /// fallback constant for what to use if this table is empty/unreachable).
+  /// Cached after first load; returns an empty map on any failure so callers
+  /// can fall back without the practice loop dead-ending.
+  Future<Map<String, Map<int, String>>> rungFormats() async {
+    if (_rungFormats != null) return _rungFormats!;
+    try {
+      final rows = List<Map<String, dynamic>>.from(
+          await _sb.from('rung_formats').select('skill, rung_no, format'));
+      final map = <String, Map<int, String>>{};
+      for (final r in rows) {
+        final skill = r['skill'] as String;
+        final rung = r['rung_no'] as int;
+        final format = r['format'] as String;
+        (map[skill] ??= {})[rung] = format;
+      }
+      _rungFormats = map;
+      return map;
+    } catch (_) {
+      return {};
+    }
   }
 
   /// The student's declared standard (defaults to 3 if missing).
@@ -49,6 +76,63 @@ class MasteryService {
     final uid = _uid;
     if (uid == null) return;
     await _sb.from('skill_mastery').upsert(m.toRow(uid));
+  }
+
+  /// Interim Ability Count wiring for the legacy Vocabulary/Reading/Writing
+  /// modules, which still pick topics from curriculum.dart rather than
+  /// `sub_skills` directly (unlike Grammar). Maps the quiz's free-text topic
+  /// onto the single best-matching sub-skill by word overlap (falling back to
+  /// a deterministic hash so repeat attempts at the same unit keep landing on
+  /// the same sub-skill, letting Elo actually converge), then replays every
+  /// answered question's correctness through the same learner-model update
+  /// used by adaptive practice. Superseded per-skill once that skill gets its
+  /// own syllabus and moves onto `sub_skills` the way Grammar just did.
+  Future<void> recordLegacyQuizCompletion({
+    required String skill,
+    required String topic,
+    required List<bool> correctness,
+    required int standard,
+  }) async {
+    if (correctness.isEmpty) return;
+    final tax = (await taxonomy()).where((t) => t['skill'] == skill).toList();
+    if (tax.isEmpty) return;
+    final code = _pickSubSkillForTopic(topic, tax);
+    final states = await loadMastery(standard);
+    final m = states.firstWhere((s) => s.subSkillCode == code,
+        orElse: () => MasteryState(subSkillCode: code, standard: standard));
+    for (final correct in correctness) {
+      final rung = m.nextTargetRung();
+      m.recordAttempt(rungNumber: rung, correct: correct);
+      await logAttempt(
+        subSkillCode: code,
+        rung: rung,
+        format: 'legacy_mcq',
+        itemDifficulty: EloConfig.itemDifficulty(standard, rung),
+        correct: correct,
+      );
+    }
+    await saveMastery(m);
+  }
+
+  /// Best sub-skill match for a free-text legacy topic string, by lowercase
+  /// word overlap with each candidate's name; deterministic hash fallback
+  /// (not random) if nothing overlaps at all.
+  String _pickSubSkillForTopic(String topic, List<Map<String, dynamic>> tax) {
+    final topicWords = topic.toLowerCase().split(RegExp(r'\W+')).toSet();
+    Map<String, dynamic>? best;
+    int bestScore = -1;
+    for (final t in tax) {
+      final nameWords =
+          (t['name'] as String).toLowerCase().split(RegExp(r'\W+')).toSet();
+      final score = topicWords.intersection(nameWords).length;
+      if (score > bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    if (best != null && bestScore > 0) return best['code'] as String;
+    final idx = topic.hashCode.abs() % tax.length;
+    return tax[idx]['code'] as String;
   }
 
   /// Appends one answered item to the event log.
