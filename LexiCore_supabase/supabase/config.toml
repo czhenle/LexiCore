@@ -424,17 +424,6 @@ entrypoint = "./functions/writing/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/writing/*.html" ]
 
-[functions.schedule]
-enabled = true
-verify_jwt = true
-import_map = "./functions/schedule/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/schedule/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/schedule/*.html" ]
-
 [functions.chatbot]
 enabled = true
 verify_jwt = true
@@ -478,3 +467,31 @@ entrypoint = "./functions/article/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/article/*.html" ]
+
+# NOTE: functions/_shared/syllabus.ts is a shared LIBRARY module (no
+# Deno.serve handler) imported by generate/reading/writing. Directories
+# prefixed with "_" are not treated as functions and shared code is bundled
+# automatically into each importer — so it must NOT have a [functions.*]
+# entry of its own.
+
+[functions.generate]
+enabled = true
+verify_jwt = true
+import_map = "./functions/generate/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/generate/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/generate/*.html" ]
+
+[functions.tutor]
+enabled = true
+verify_jwt = true
+import_map = "./functions/tutor/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/tutor/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/tutor/*.html" ]

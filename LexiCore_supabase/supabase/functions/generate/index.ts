@@ -19,6 +19,7 @@
 // ============================================================================
 
 import OpenAI from "npm:openai";
+import { standardSyllabus } from "../_shared/syllabus.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,31 +100,53 @@ interface Item {
 
 // ── PROMPT ──────────────────────────────────────────────────────────────────
 function buildPrompt(p: GenParams): string {
+  const syllabus = standardSyllabus(p.standard);
   const errs = (p.recent_errors ?? []).length
     ? `\nThe student RECENTLY got these wrong — target the same weakness:\n- ${p.recent_errors!.join("\n- ")}`
     : "";
   const shape = CHOICE_FORMATS.has(p.format)
-    ? `Return options A-D and the correct_answer letter. Exactly ONE option is correct. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.${
+    ? `Return options A-D and the correct_answer letter. Exactly ONE option is correct. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.
+"correct_answer" MUST be the option LETTER — exactly one of "A", "B", "C" or "D" — never the option's text. Example: for options {"A":"a","B":"an"} where "an" is right, correct_answer is "B", NOT "an". Do NOT include an "answer" field on a choice item.${
         FORMAT_HINT[p.format] ? ` ${FORMAT_HINT[p.format]}` : ""
       }`
-    : `This is an OPEN item the student writes. Provide a model "answer" and an "explanation". Do NOT provide multiple-choice options.`;
+    : `This is an OPEN-RESPONSE item: the student WRITES their own answer in a text box. There are no choices to pick from.
+Provide a model "answer" (what a good student response looks like) and an "explanation".
+You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase the question as "Which of the following…" or list A/B/C/D anywhere in the question text — the student cannot see any options.`;
+
+  // Writing's genuinely open, higher-rung formats (guided/free composition,
+  // open paragraphs) need an actual word-count target and complexity
+  // guidance from the shared per-Standard syllabus config — without this
+  // they default to whatever length the model feels like. Only applies to
+  // OPEN Writing formats; scaffolded choice-shaped Writing items (even at
+  // higher Standards) don't need a word count.
+  const writingGuidance =
+    p.skill === "Writing" && !CHOICE_FORMATS.has(p.format) && syllabus.writingMinWords > 0
+      ? `\nWriting complexity for Standard ${p.standard}: ${syllabus.writingComplexity}\nThis is a written composition response — require at least ${syllabus.writingMinWords} words.`
+      : "";
 
   return `You are an English item-writer for a Malaysian primary-school learner.
 Write ONE item that EXACTLY matches this specification:
 - Skill: ${p.skill}
 - Sub-skill: ${p.sub_skill_name} (${p.sub_skill})
-- Ladder rung ${p.rung} — ${RUNG_INTENT[p.rung]}
+- Ladder rung: ${p.rung}
+- What rung ${p.rung} means: ${RUNG_INTENT[p.rung]}
 - Item format: ${p.format}
 - School standard: ${p.standard} (difficulty target ${p.target_difficulty})
-${shape}${errs}
+- Allowed grammar/vocabulary (Standard ${p.standard} and cumulative from earlier Standards): ${syllabus.allowedGrammar}
+${shape}${writingGuidance}${errs}
 
 Rules:
 1. The item must test ${p.sub_skill_name} and NOTHING else.
 2. Match rung ${p.rung} exactly — do not make it easier or harder.
 3. Age-appropriate, natural language for a Standard ${p.standard} child.
-4. Return ONLY valid JSON with keys:
-   question, format, options (choice only), correct_answer (choice only),
-   answer (open only), explanation, sub_skill, rung.`;
+4. Return ONLY valid JSON with EXACTLY these keys — no others:
+   ${
+     CHOICE_FORMATS.has(p.format)
+       ? `question, format, options, correct_answer, explanation, sub_skill, rung`
+       : `question, format, answer, explanation, sub_skill, rung`
+   }
+5. "rung" must be the bare integer ${p.rung} — not a string, and not a label
+   like "${p.rung} — ...". "sub_skill" must be exactly "${p.sub_skill}".`;
 }
 
 // ── STRUCTURAL VALIDATION (LexiCore's own checks, no model needed) ───────────
@@ -147,7 +170,19 @@ function validateStructure(item: Item, p: GenParams): string[] {
       issues.push("open item must include a model answer");
     if (item.options) issues.push("open item must not have options");
   }
-  if (item.rung !== p.rung) issues.push(`rung mismatch (got ${item.rung}, want ${p.rung})`);
+  // The model sometimes echoes the prompt's own rung line back verbatim
+  // (e.g. "3 — CONTROLLED") instead of the bare integer. That used to fail
+  // strict !== on all 3 attempts and return a 422, which is a hard failure
+  // for the student over pure formatting. Parse a leading integer so the
+  // label form is tolerated; only a genuinely DIFFERENT rung is an issue.
+  // JSON.stringify in the message so a type mismatch is visible — the old
+  // message rendered as the useless "got 3, want 3".
+  const rungNum = typeof item.rung === "number"
+    ? item.rung
+    : parseInt(String(item.rung ?? ""), 10);
+  if (rungNum !== p.rung) {
+    issues.push(`rung mismatch (got ${JSON.stringify(item.rung)}, want ${p.rung})`);
+  }
   return issues;
 }
 
@@ -161,11 +196,11 @@ Fail it if ANY is true:
 - it does not test "${p.sub_skill_name}"
 - it is not appropriate for a Standard ${p.standard} child
 Item: ${JSON.stringify(item)}`;
+  // No temperature: gpt-5.6-luna is a reasoning model and rejects it.
   const r = await openai.chat.completions.create({
     model: VERIFIER_MODEL,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
-    temperature: 0,
   });
   try {
     const v = JSON.parse(r.choices[0].message.content ?? "{}");
@@ -189,7 +224,6 @@ Deno.serve(async (req) => {
         model: GENERATOR_MODEL,
         messages: [{ role: "user", content: buildPrompt(p) + feedback }],
         response_format: { type: "json_object" },
-        temperature: 0.7,
       });
 
       let item: Item;
@@ -208,6 +242,11 @@ Deno.serve(async (req) => {
       qa.push({ attempt, issues });
 
       if (issues.length === 0) {
+        // Normalise the fields LexiCore already knows authoritatively, so the
+        // client never has to trust the model's echo of them.
+        item.rung = p.rung;
+        item.sub_skill = p.sub_skill;
+        item.format = p.format;
         return json({ item, qa, attempts: attempt }); // PASSED
       }
       // REPAIR: feed the exact failures back into the next generation.

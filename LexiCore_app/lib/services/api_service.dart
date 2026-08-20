@@ -3,29 +3,37 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
+// NOTE ON THE `Response` NAME: both package:http and package:supabase_flutter
+// (via its own dependencies) define a class named `Response`. Both imports
+// above are aliased (`as http`, `as sb`) specifically to avoid that name
+// clashing — but as extra insurance, every http.Response below is given an
+// EXPLICIT type (`final http.Response x = ...`) instead of `final x = ...`.
+// Explicit typing removes any possibility of the analyzer picking the wrong
+// `Response` class, regardless of import order or analyzer caching.
+
 class ApiService {
   static const String supabaseUrl =
       'https://cldngeqtuyxwuvtsaocm.supabase.co/functions/v1';
-  static const String anonKey =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsZG5nZXF0dXl4d3V2dHNhb2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1NDQzNTgsImV4cCI6MjA5MTEyMDM1OH0.vYL9Cn81OptK7UVyZzbjpLxS_uyzPOiSrLyqQX9X6Nk';
+  static const String publishable_key =
+      'sb_publishable_NJvrBZXKXKoeGp4e-GzI3A_yIkohgjh';
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer $anonKey',
+        'Authorization': 'Bearer $publishable_key',
       };
 
   // ── VOCABULARY MODULE ────────────────────────────────────────────────────
-  // mode: 'image' | 'meaning' | 'context'
+  // mode: 'image' | 'spelling' | 'meaning' | 'context' | 'synonyms'
   Future<Map<String, dynamic>?> generateVocabularyModule(
       int level, String topic, String mode) async {
     try {
-      final response = await http.post(
+      final http.Response response = await http.post(
         Uri.parse('$supabaseUrl/vocabulary'),
         headers: _headers,
         body: jsonEncode({
           'standard': level,
-          'topic':    topic,
-          'mode':     mode,
+          'topic': topic,
+          'mode': mode,
         }),
       );
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -44,19 +52,18 @@ class ApiService {
     try {
       // Fire one request per topic in parallel
       final futures = topics.map((topic) async {
-        final res = await http.post(
+        final http.Response res = await http.post(
           Uri.parse('$supabaseUrl/grammar'),
           headers: _headers,
           body: jsonEncode({
-            'standard':            level,
-            'topic':               topic,
+            'standard': level,
+            'topic': topic,
             'questions_per_topic': questionsPerTopic,
           }),
         );
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
-          final questions =
-              (data['questions'] as List<dynamic>? ?? []);
+          final questions = (data['questions'] as List<dynamic>? ?? []);
           // Tag each question with its topic
           return questions.map((q) {
             q['topic'] = topic;
@@ -80,12 +87,12 @@ class ApiService {
   Future<Map<String, dynamic>?> generateReadingModule(
       int level, String topic) async {
     try {
-      final response = await http.post(
+      final http.Response response = await http.post(
         Uri.parse('$supabaseUrl/reading'),
         headers: _headers,
         body: jsonEncode({
           'standard': level,
-          'topic':    topic,
+          'topic': topic,
         }),
       );
       if (response.statusCode == 200) return jsonDecode(response.body);
@@ -102,12 +109,12 @@ class ApiService {
   Future<Map<String, dynamic>?> generateWritingModule(
       int level, String topic, String exerciseType) async {
     try {
-      final response = await http.post(
+      final http.Response response = await http.post(
         Uri.parse('$supabaseUrl/writing'),
         headers: _headers,
         body: jsonEncode({
-          'standard':      level,
-          'topic':         topic,
+          'standard': level,
+          'topic': topic,
           'exercise_type': exerciseType,
         }),
       );
@@ -136,7 +143,8 @@ class ApiService {
       // supabase.auth.getUser() server-side), so it must be invoked through
       // the Supabase client — not the anon-key http.post used elsewhere —
       // so the student's login token is attached automatically.
-      final res = await sb.Supabase.instance.client.functions.invoke(
+      final sb.FunctionResponse res =
+          await sb.Supabase.instance.client.functions.invoke(
         'article',
         body: {
           'standard': standard,
@@ -182,83 +190,50 @@ class ApiService {
     }
   }
 
-  // ── STUDY SCHEDULE ───────────────────────────────────────────────────────
-  Future<Map<String, dynamic>?> generateSchedule(
-    int standard,
-    String studyTime,
-    String strength,
-    String weakness, {
-    int detectedLevel = 3,
-    int vocabScore    = 0,
-    int grammarScore  = 0,
-    int readingScore  = 0,
-    int writingScore  = 0,
-    String? modifier,
-  }) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$supabaseUrl/schedule'),
-        headers: _headers,
-        body: jsonEncode({
-          'standard':       standard,
-          'detected_level': detectedLevel,
-          'study_time':     studyTime,
-          'strength':       strength,
-          'weakness':       weakness,
-          'vocab_score':    vocabScore,
-          'grammar_score':  grammarScore,
-          'reading_score':  readingScore,
-          'writing_score':  writingScore,
-          if (modifier != null) 'modifier': modifier,
-        }),
-      );
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      debugPrint('Schedule error [${response.statusCode}]: ${response.body}');
-      return null;
-    } catch (e) {
-      debugPrint('Schedule network error: $e');
-      return null;
-    }
-  }
-
   // ── AI CHATBOT ───────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> chatWithLexi(
     String message,
     int standard, {
     int detectedLevel = 3,
-    String weakness   = 'Grammar',
-    int vocabScore    = 0,
-    int grammarScore  = 0,
-    int readingScore  = 0,
-    int writingScore  = 0,
+    String weakness = 'Grammar',
+    int vocabScore = 0,
+    int grammarScore = 0,
+    int readingScore = 0,
+    int writingScore = 0,
     String? imageBase64,
     List<Map<String, String>> history = const [],
     String mode = 'auto',
   }) async {
     try {
-      final response = await http.post(
+      final http.Response response = await http.post(
         Uri.parse('$supabaseUrl/chatbot'),
         headers: _headers,
         body: jsonEncode({
-          'message':        message,
-          'standard':       standard,
+          'message': message,
+          'standard': standard,
           'detected_level': detectedLevel,
-          'weakness':       weakness,
-          'vocab_score':    vocabScore,
-          'grammar_score':  grammarScore,
-          'reading_score':  readingScore,
-          'writing_score':  writingScore,
-          'history':        history,
-          'mode':           mode,
+          'weakness': weakness,
+          'vocab_score': vocabScore,
+          'grammar_score': grammarScore,
+          'reading_score': readingScore,
+          'writing_score': writingScore,
+          'history': history,
+          'mode': mode,
           if (imageBase64 != null) 'image': imageBase64,
         }),
       );
-      if (response.statusCode == 200) {
+      // 400 also carries a proper `reply` (e.g. "that message is a little too
+      // long") — unwrap it too, instead of replacing the server's specific,
+      // child-friendly guidance with a generic error.
+      if (response.statusCode == 200 || response.statusCode == 400) {
         final reply = jsonDecode(response.body)['reply'];
         if (reply is Map) return Map<String, dynamic>.from(reply);
-        // Older/string replies -> wrap so the UI can always render a type.
-        return {'type': 'simple_answer', 'text': reply?.toString() ?? ''};
+        if (reply != null) {
+          // Older/string replies -> wrap so the UI can always render a type.
+          return {'type': 'simple_answer', 'text': reply.toString()};
+        }
       }
+      debugPrint('Chat error [${response.statusCode}]: ${response.body}');
       return {
         'type': 'simple_answer',
         'text': 'Oops, something went wrong. Try again!'
@@ -271,5 +246,4 @@ class ApiService {
       };
     }
   }
-
 }

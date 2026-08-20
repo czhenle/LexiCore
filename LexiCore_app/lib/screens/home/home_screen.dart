@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../models/learner_model.dart';
 import '../../services/supabase_service.dart';
 import '../../services/mastery_service.dart';
 import '../../widgets/lexi_nav_bar.dart';
@@ -43,7 +44,24 @@ class _HomeScreenState extends State<HomeScreen> {
   int    _detectedLevel = 3;
   bool   _isLoading     = true;
 
-  // Today's task from schedule (if saved)
+  // Today's task from the stored weekly schedule (see MasteryService's
+  // getOrGenerateWeeklySchedule/getTodayTask) — {day, skill, task_label,
+  // sub_skill_code} for a normal day, or {type: 'assessment'|'rest', ...}.
+  Map<String, dynamic>? _todayTask;
+  String? _weekGoal;
+
+  static const Map<String, Color> _skillColorMap = {
+    'Vocabulary': _brightOrange,
+    'Grammar': _mintGreen,
+    'Reading': _lightblue,
+    'Writing': _coralRed,
+  };
+  static const Map<String, IconData> _skillIconMap = {
+    'Vocabulary': Icons.abc_rounded,
+    'Grammar': Icons.rule_rounded,
+    'Reading': Icons.menu_book_rounded,
+    'Writing': Icons.edit_rounded,
+  };
 
   @override
   void initState() {
@@ -56,12 +74,16 @@ class _HomeScreenState extends State<HomeScreen> {
       final profile    = await _supabaseService.getStudentProfile();
       final assessment = await _supabaseService.getAssessmentResults();
       final summary    = await _mastery.masterySummary();
+      final todayTask  = await _mastery.getTodayTask();
+      final plan       = await _mastery.getOrGenerateWeeklySchedule();
 
       if (mounted) {
         setState(() {
           _username      = (profile?['username']         as String?) ?? 'Student';
           _detectedLevel = (assessment?['detected_level'] as int?)   ?? 3;
           _summary       = summary;
+          _todayTask     = todayTask;
+          _weekGoal      = plan?['week_goal'] as String?;
           _isLoading     = false;
         });
       }
@@ -86,15 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
     };
     return scores.entries.reduce((a, b) => a.value <= b.value ? a : b).key;
   }
-
-  String get _strengthSkill {
-    final scores = {
-      for (final s in const ['Vocabulary', 'Grammar', 'Reading', 'Writing'])
-        s: _liveScore(s),
-    };
-    return scores.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
-  }
-
+  
   // Navigates directly to the correct module screen based on today's skill
   void _startMission(String skill) {
     Widget destination;
@@ -125,8 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       _buildHomeView(),
       const StudyScheduleScreen(),
-      const AiChatbotScreen(),
       const ModuleSelectionScreen(),
+      const AiChatbotScreen(),
       const UserProfile(),
     ];
 
@@ -211,8 +225,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 28),
 
-          // ── Today's Practice: progress, strengths, weaknesses, start ──
-          _sectionLabel('Today\'s Practice'),
+          // ── Today's Task: progress, strengths, weaknesses, start ──
+          _sectionLabel('Today\'s Task'),
           const SizedBox(height: 12),
           _buildLearningCard(),
           const SizedBox(height: 28),
@@ -300,6 +314,29 @@ class _HomeScreenState extends State<HomeScreen> {
                     fontSize: 13,
                     fontWeight: FontWeight.w700)),
           ),
+          if (_weekGoal != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: _brightOrange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _brightOrange.withValues(alpha: 0.3)),
+              ),
+              child: Row(children: [
+                const Text('🎯', style: TextStyle(fontSize: 16)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(_weekGoal!,
+                      style: TextStyle(
+                          color: Colors.orange.shade900,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
@@ -317,26 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(child: _skillPill('🎯', 'Focus on', s.weakest, _brightOrange)),
           ]),
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: () => Navigator.push(context,
-                  MaterialPageRoute(
-                      builder: (_) => AdaptivePracticeScreen(focusSkill: s.weakest))),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _brightOrange,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18)),
-              ),
-              icon: const Icon(Icons.bolt_rounded, size: 20),
-              label: Text('Start Practice — ${s.weakest}',
-                  style:
-                      const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-            ),
-          ),
+          ..._todayTaskAction(s),
           const SizedBox(height: 6),
           Center(
             child: TextButton(
@@ -351,6 +369,127 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  /// The card's primary action, driven by today's entry in the stored
+  /// weekly schedule rather than just "practise your weakest skill" —
+  /// Thursday saying "Write: Free Composition" means tapping the button
+  /// launches that specific sub-skill, not a generic session.
+  List<Widget> _todayTaskAction(MasterySummary s) {
+    final task = _todayTask;
+    if (task == null) {
+      // Fallback if no schedule could be generated yet.
+      return [
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(
+                    builder: (_) => AdaptivePracticeScreen(focusSkill: s.weakest))),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _brightOrange,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
+            icon: const Icon(Icons.bolt_rounded, size: 20),
+            label: Text('Start Practice — ${s.weakest}',
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+          ),
+        ),
+      ];
+    }
+
+    final type = task['type'] as String?;
+    if (type == 'rest') {
+      return const [
+        Center(
+          child: Text('Enjoy your rest day! 🌤️ See you tomorrow.',
+              style: TextStyle(
+                  color: _navyText, fontWeight: FontWeight.w700, fontSize: 14)),
+        ),
+      ];
+    }
+
+    final label = task['task_label'] as String? ?? 'Start today\'s task';
+    final skill = task['skill'] as String?;
+    final color = _skillColorMap[skill] ?? _brightOrange;
+    final icon = type == 'assessment'
+        ? Icons.fact_check_rounded
+        : (_skillIconMap[skill] ?? Icons.bolt_rounded);
+
+    return [
+      SizedBox(
+        width: double.infinity,
+        height: 48,
+        child: ElevatedButton.icon(
+          onPressed: () => _startTodayTask(task),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          ),
+          icon: Icon(icon, size: 20),
+          label: Text(label,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _startTodayTask(Map<String, dynamic> task) async {
+    final type = task['type'] as String?;
+    if (type == 'assessment') {
+      final queue = await _mastery.buildWeeklyAssessmentQueue();
+      if (queue.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Finish a few practice sessions first, then come back for your weekly assessment!')));
+        }
+        return;
+      }
+      if (!mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AdaptivePracticeScreen(
+            fixedQueue: queue,
+            resultModuleName: 'Weekly Assessment',
+            resultColor: const Color(0xFF6A1B9A),
+            resultIcon: Icons.fact_check_rounded,
+            onSessionComplete: (answered, correct) {
+              _mastery.saveWeeklyCheckin(itemsAnswered: answered, itemsCorrect: correct);
+            },
+          ),
+        ),
+      );
+      await _mastery.markTodayTaskComplete();
+      if (mounted) _loadData();
+      return;
+    }
+
+    final subSkillCode = task['sub_skill_code'] as String?;
+    final skill = (task['skill'] as String?) ?? 'Grammar';
+    if (subSkillCode == null) {
+      _startMission(skill);
+      return;
+    }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdaptivePracticeScreen(
+          fixedQueue: [PracticeQueueItem(subSkillCode, 8)],
+          resultModuleName: skill,
+          resultColor: _skillColorMap[skill],
+          resultIcon: _skillIconMap[skill],
+        ),
+      ),
+    );
+    await _mastery.markTodayTaskComplete();
+    if (mounted) _loadData();
   }
 
   Widget _skillPill(String emoji, String label, String skill, Color color) {
@@ -538,41 +677,6 @@ class _HomeScreenState extends State<HomeScreen> {
               minHeight: 10, // Thicker bars for kids
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statBadge(
-      String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        // Added a slightly stronger colored border so it pops against the white card
-        border: Border.all(color: color.withValues(alpha: 0.3), width: 2), 
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: color), // Colored icon
-              const SizedBox(width: 6),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: color, // Colored text
-                      fontWeight: FontWeight.w800)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(value,
-              style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: color)), // Colored value text
         ],
       ),
     );

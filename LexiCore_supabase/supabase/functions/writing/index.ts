@@ -1,6 +1,7 @@
 import { ChatOpenAI } from "npm:@langchain/openai";
 import { ChatPromptTemplate } from "npm:@langchain/core/prompts";
 import { z } from "npm:zod";
+import { standardSyllabus } from "../_shared/syllabus.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,7 +15,7 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-// Base schema (all exercise types)
+// Base schema (completion/ordering/correction, and low-Standard "guided" composition)
 const writingSchema = z.object({
   questions: z.array(z.object({
     context_text:   z.string().describe("The sentence/paragraph context. For completion: sentence with ___. For ordering: jumbled words separated by |. For correction: the sentence with an error. For composition: the writing prompt."),
@@ -23,6 +24,20 @@ const writingSchema = z.object({
     correct_answer: z.enum(["A", "B", "C", "D"]),
     explanation:    z.string().describe("Explanation of the correct answer and the writing rule"),
   })),
+});
+
+// Open schema: a genuine free-text paragraph task, used for "composition" at
+// Standard >= 3 per LexiCore_Syllabus_Specification.md sections 9-13 — a
+// real writing prompt with a minimum word count, not a 4-option MCQ.
+// Validation/AI-grading of the student's actual text is out of scope this
+// phase; the client reveals model_answer + checklist and lets the student
+// self-assess, the same pattern already used by the adaptive practice loop.
+const openSchema = z.object({
+  prompt:        z.string().describe("The writing task itself, e.g. 'Write at least N words about...'"),
+  min_words:     z.number().describe("Minimum word count expected at this Standard"),
+  model_answer:  z.string().describe("A model response meeting the prompt, at the target Standard's complexity"),
+  checklist:     z.array(z.string()).describe("3-5 short self-check items, e.g. 'Used at least one descriptive adjective'"),
+  explanation:   z.string().describe("Brief note on what makes the model answer work"),
 });
 
 Deno.serve(async (req) => {
@@ -35,7 +50,38 @@ Deno.serve(async (req) => {
       exercise_type = "completion",
     } = await req.json();
 
-    const llm           = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.7 });
+    const level    = Math.min(Math.max(Number(standard), 1), 6);
+    const syllabus = standardSyllabus(level);
+    const llm      = new ChatOpenAI({ model: "gpt-5.6-luna"});
+
+    // Per LexiCore_Syllabus_Specification.md sections 9-13: composition
+    // moves from guided/MCQ-style at Standard < 3 to genuine independent
+    // paragraph writing with a minimum word count at Standard >= 3.
+    if (exercise_type === "composition" && level >= 3) {
+      const openLlm = llm.withStructuredOutput(openSchema);
+      const prompt = ChatPromptTemplate.fromMessages([
+        ["system", `You are an English writing teacher for Standard ${level} (age ${level + 6}).
+          Vocabulary/grammar must stay within: ${syllabus.allowedGrammar}
+          Writing complexity for this Standard: ${syllabus.writingComplexity}`],
+        ["human", `Create ONE writing prompt about "${topic}" for a Standard ${level} student.
+          The prompt must ask for at least ${syllabus.writingMinWords} words.
+          Provide a model_answer that meets the prompt at this Standard's complexity — not simpler, not more advanced.
+          Provide a short self-check checklist (3-5 items) the student can use to review their own writing.`],
+      ]);
+      const result = await prompt.pipe(openLlm).invoke({});
+      return jsonResponse({
+        questions: [{
+          context_text: result.prompt,
+          question: `Write your response below (at least ${result.min_words} words).`,
+          is_open: true,
+          min_words: result.min_words,
+          model_answer: result.model_answer,
+          checklist: result.checklist,
+          explanation: result.explanation,
+        }],
+      });
+    }
+
     const structuredLlm = llm.withStructuredOutput(writingSchema);
 
     // ── Prompts per exercise type ────────────────────────────────────────────
@@ -67,8 +113,9 @@ Deno.serve(async (req) => {
         Options: A=They buyed carrots and tomatoes. B=They bought fresh carrots and tomatoes. C=They has carrots. D=Market was open.`,
     };
 
-    const systemPrompt = `You are an English writing teacher for Standard ${standard}.
-      Vocabulary and sentence complexity should be appropriate for Standard ${standard} students (age ${standard + 6}).
+    const systemPrompt = `You are an English writing teacher for Standard ${level}.
+      Vocabulary and grammar must stay within: ${syllabus.allowedGrammar}
+      Sentence complexity should be appropriate for Standard ${level} students (age ${level + 6}).
       All exercises should be educational, relevant to Malaysian primary school students, and focused on improving writing skills.`;
 
     const userPrompt = prompts[exercise_type] ?? prompts["completion"];

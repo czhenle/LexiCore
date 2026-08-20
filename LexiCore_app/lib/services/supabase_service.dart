@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart';
 import '../models/learner_model.dart';
@@ -52,7 +51,7 @@ class SupabaseService {
       'study_time': studyTime,
       'grade': grade,
       'rate': rate,
-    });
+    }, onConflict: 'user_id');
   }
 
   Future<Map<String, dynamic>?> getStudentProfile() async {
@@ -97,7 +96,7 @@ class SupabaseService {
       'writing_score': writingScore,
       'detected_level': detectedLevel,
       'taken_at': DateTime.now().toIso8601String(),
-    });
+    }, onConflict: 'user_id');
   }
 
   /// Seeds the per-sub-skill mastery map from the coarse assessment scores.
@@ -279,99 +278,4 @@ class SupabaseService {
     return progress;
   }
 
-  // ── STUDY SCHEDULE ────────────────────────────────────────────────────────
-
-  Future<void> saveStudySchedule(Map<String, dynamic> plan) async {
-    final userId = currentUser?.id;
-    if (userId == null) return;
-
-    await supabase.from('study_schedules').upsert({
-      'user_id': userId,
-      'plan': plan,
-      'created_at': DateTime.now().toIso8601String(),
-    });
-  }
-
-  /// Returns the saved plan with '_created_at' injected so the schedule
-  /// screen can compute which week number the student is currently on.
-  Future<Map<String, dynamic>?> getSavedSchedule() async {
-    final userId = currentUser?.id;
-    if (userId == null) return null;
-
-    final response = await supabase
-        .from('study_schedules')
-        .select()
-        .eq('user_id', userId)
-        .maybeSingle();
-
-    if (response == null) return null;
-
-    final plan = response['plan'] as Map<String, dynamic>?;
-    if (plan == null) return null;
-
-    // Inject created_at so the screen knows when the plan started
-    plan['_created_at'] = response['created_at'];
-    return plan;
-  }
-
-  /// Returns today's task from the saved schedule, matched to the
-  /// correct week based on how many days ago the plan was created.
-  Future<Map<String, dynamic>?> getTodayTask() async {
-    try {
-      final userId = currentUser?.id;
-      if (userId == null) return null;
-
-      final response = await supabase
-          .from('study_schedules')
-          .select()
-          .eq('user_id', userId)
-          .maybeSingle();
-
-      if (response == null) return null;
-
-      final createdAtStr = response['created_at'] as String?;
-      final createdAt = createdAtStr != null
-          ? DateTime.tryParse(createdAtStr) ?? DateTime.now()
-          : DateTime.now();
-
-      final weeks = response['plan']?['weeks'] as List<dynamic>?;
-      if (weeks == null || weeks.isEmpty) return null;
-
-      // Compute which week we're currently in
-      final daysSinceStart = DateTime.now().difference(createdAt).inDays;
-      final currentWeek = (daysSinceStart ~/ 7 + 1).clamp(1, 4);
-
-      // Find the matching week
-      final weekData = weeks.firstWhere(
-        (w) => (w['week'] as int?) == currentWeek,
-        orElse: () => weeks.first,
-      );
-
-      final tasks = weekData['daily_tasks'] as List<dynamic>?;
-      if (tasks == null) return null;
-
-      // Match today's day name
-      const days = [
-        'Monday',
-        'Tuesday',
-        'Wednesday',
-        'Thursday',
-        'Friday',
-        'Saturday',
-        'Sunday',
-      ];
-      final todayName = days[DateTime.now().weekday - 1];
-
-      for (final task in tasks) {
-        if ((task['day'] as String?)?.toLowerCase() ==
-            todayName.toLowerCase()) {
-          return Map<String, dynamic>.from(task as Map);
-        }
-      }
-      return null;
-    } catch (e) {
-      debugPrint('getTodayTask error: $e');
-      return null;
-    }
-  }
 }

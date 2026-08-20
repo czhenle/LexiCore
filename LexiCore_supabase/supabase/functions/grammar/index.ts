@@ -82,7 +82,8 @@ Deno.serve(async (req) => {
     const level   = Math.min(Math.max(Number(standard), 1), 6);
     const profile = levelProfiles[level] ?? levelProfiles[3];
 
-    const llm           = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.7 });
+    // No temperature: gpt-5.6-luna is a reasoning model and rejects it.
+    const llm           = new ChatOpenAI({ model: "gpt-5.6-luna" });
     const structuredLlm = llm.withStructuredOutput(grammarSchema);
 
     const prompt = ChatPromptTemplate.fromMessages([

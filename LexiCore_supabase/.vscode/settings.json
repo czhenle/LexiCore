@@ -1,4 +1,19 @@
 {
+  // Applies when LexiCore_supabase/ is opened as its own VS Code workspace.
+  // (When the repo root LexiCore/ is opened instead, the equivalent settings
+  // in LexiCore/.vscode/settings.json are what take effect — VS Code only
+  // reads workspace-root settings, so both need to exist.)
+  //
+  // Paths here are relative to THIS folder. The previous value,
+  // "./LexiCore_supabase/supabase/functions/deno.json", double-counted the
+  // LexiCore_supabase segment and pointed at a file that does not exist.
+  // No `deno.config` is needed at all: each function directory has its own
+  // deno.json, which Deno finds by walking up from the file being edited.
+  //
+  // Requires the Deno extension: denoland.vscode-deno
   "deno.enable": true,
-  "deno.config": "./LexiCore_supabase/supabase/functions/deno.json"
+  "deno.enablePaths": [
+    "supabase/functions"
+  ],
+  "deno.lint": true
 }

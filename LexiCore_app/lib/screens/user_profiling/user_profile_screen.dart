@@ -22,7 +22,6 @@ class _UserProfileState extends State<UserProfile> {
   static const Color _skyLight = Color(0xFFDFF1FF);
   static const Color _mintGreen = Color(0xFF4DB6AC);
   static const Color _coralRed = Color(0xFFFF5252);
-  static const Color _vibrantPurple = Color(0xFFAB47BC);
 
   final _supabaseService = SupabaseService();
   final _picker = ImagePicker();
@@ -44,8 +43,6 @@ class _UserProfileState extends State<UserProfile> {
   Future<void> _loadProfile() async {
     try {
       final profile = await _supabaseService.getStudentProfile();
-      final assessment = await _supabaseService.getAssessmentResults();
-      final user = _supabaseService.currentUser;
 
       setState(() {
         _username = (profile?['username'] as String?) ?? 'Student';

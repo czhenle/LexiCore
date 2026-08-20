@@ -62,11 +62,16 @@ class _ReadingModuleScreenState extends State<ReadingModuleScreen> {
         _currentUnit.topic,
       );
 
-      if (data != null) {
+      // The reading function does no schema validation (it just JSON.parses
+      // the model's output), so an empty/missing questions array is a real
+      // possibility — reject it here rather than crashing later with
+      // RangeError on rawQuestions[0] and a divide-by-zero on the score.
+      final qs = data?['questions'] as List<dynamic>?;
+      if (data != null && qs != null && qs.isNotEmpty) {
         setState(() {
-          _articleTitle  = data['title']      as String?   ?? 'Reading Passage';
-          _articleBody   = data['body']       as String?   ?? '';
-          _rawQuestions  = data['questions']  as List<dynamic>? ?? [];
+          _articleTitle  = data['title'] as String? ?? 'Reading Passage';
+          _articleBody   = data['body']  as String? ?? '';
+          _rawQuestions  = qs;
           _isLoading     = false;
         });
       } else {
@@ -534,6 +539,27 @@ class _ReadingQuestionScreenState extends State<ReadingQuestionScreen> {
                           fontSize: 13, color: _textMid),
                       textAlign: TextAlign.center,
                     ),
+                    // Standard >3 passages include 2 KBAT (higher-order)
+                    // questions alongside the 5 direct ones — flag them so
+                    // the student knows to think rather than just re-read.
+                    if (q['type'] == 'kbat') ...[
+                      const SizedBox(height: 10),
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6A1B9A).withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text('🧠 Thinking question',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF6A1B9A))),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
 
                     Text(q['question'] ?? '',

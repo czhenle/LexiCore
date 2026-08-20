@@ -1,0 +1,19 @@
+{
+  // The Supabase edge functions are Deno, not Node — they use `npm:` import
+  // specifiers and the `Deno` global, neither of which the TypeScript
+  // language server understands. Without this it analyses them with tsserver
+  // and reports false errors ("Cannot find module 'npm:zod'", "Cannot find
+  // name 'Deno'", "Parameter 'req' implicitly has an 'any' type").
+  //
+  // `deno.enablePaths` scopes the Deno language server to just the functions
+  // folder, so the Flutter app under LexiCore_app/ is left alone. Each
+  // function directory has its own deno.json, which Deno discovers by walking
+  // up from the file being edited — so no `deno.config` entry is needed here.
+  //
+  // Requires the Deno extension: denoland.vscode-deno
+  "deno.enable": true,
+  "deno.enablePaths": [
+    "LexiCore_supabase/supabase/functions"
+  ],
+  "deno.lint": true
+}

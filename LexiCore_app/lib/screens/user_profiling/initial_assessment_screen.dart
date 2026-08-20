@@ -1,5 +1,7 @@
 // ignore_for_file: unnecessary_underscores
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
@@ -84,7 +86,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
     if (vocabData is Map && vocabData['questions'] != null) {
       final qs = (vocabData['questions'] as List).take(5).toList();
       for (var q in qs) {
-        q['type'] = 'Vocabulary';
+        q['skill'] = 'Vocabulary';
         all.add(q);
       }
     }
@@ -94,7 +96,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
     if (grammarData is List) {
       final qs = grammarData.take(5).toList();
       for (var q in qs) {
-        q['type'] = 'Grammar';
+        q['skill'] = 'Grammar';
         all.add(q);
       }
     }
@@ -107,9 +109,14 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
       final articleTitle = readingData['title'] as String? ?? 'Reading Passage';
       _articleTitle = articleTitle;
       _articleBody = articleBody;
-      final qs = (readingData['questions'] as List).take(5).toList();
+      // Take ALL returned questions, not the first 5: `reading` returns 5
+      // direct questions for Standard <=3 but 5 direct + 2 KBAT for
+      // Standard >3, ordered direct-first. Truncating to 5 silently dropped
+      // both higher-order questions at exactly the standards that have them,
+      // so the diagnostic never measured inference for Standard 4-6.
+      final qs = (readingData['questions'] as List).toList();
       for (var q in qs) {
-        q['type'] = 'Reading';
+        q['skill'] = 'Reading';
         q['context_text'] = articleBody;
         all.add(q);
       }
@@ -120,7 +127,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
     if (writingData is Map && writingData['questions'] != null) {
       final qs = (writingData['questions'] as List).take(5).toList();
       for (var q in qs) {
-        q['type'] = 'Writing';
+        q['skill'] = 'Writing';
         all.add(q);
       }
     }
@@ -134,7 +141,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
           'Reading': 3,
           'Writing': 4,
         };
-        return (order[a['type']] ?? 99).compareTo(order[b['type']] ?? 99);
+        return (order[a['skill']] ?? 99).compareTo(order[b['skill']] ?? 99);
       });
 
       setState(() {
@@ -159,11 +166,11 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
       // Go back to transition screen
       setState(() => _currentState = AssessmentState.transition);
     } else if (_currentState == AssessmentState.quiz) {
-      final currentType = _questions[_currentIndex]['type'] as String? ?? '';
+      final currentType = _questions[_currentIndex]['skill'] as String? ?? '';
       // If on first reading question, go back to passage screen
       if (currentType == 'Reading' &&
           (_currentIndex == 0 ||
-              _questions[_currentIndex - 1]['type'] != 'Reading')) {
+              _questions[_currentIndex - 1]['skill'] != 'Reading')) {
         setState(() => _currentState = AssessmentState.readingPassage);
       } else if (_currentIndex > 0) {
         setState(() {
@@ -182,8 +189,8 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
     }
 
     if (_currentIndex < _questions.length - 1) {
-      final nextType = _questions[_currentIndex + 1]['type'] as String? ?? '';
-      final currentType = _questions[_currentIndex]['type'] as String? ?? '';
+      final nextType = _questions[_currentIndex + 1]['skill'] as String? ?? '';
+      final currentType = _questions[_currentIndex]['skill'] as String? ?? '';
 
       // Intercept: if moving from non-Reading → Reading, show passage first
       if (nextType == 'Reading' && currentType != 'Reading') {
@@ -218,7 +225,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
     };
 
     for (int i = 0; i < _questions.length; i++) {
-      final type = (_questions[i]['type'] as String?) ?? 'Grammar';
+      final type = (_questions[i]['skill'] as String?) ?? 'Grammar';
       final correct = _questions[i]['correct_answer'] as String?;
       final given = _answers[i];
       if (results.containsKey(type)) {
@@ -371,11 +378,11 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
   // ── 3. Transition ───────────────────────────────────────────────────────
   Widget _buildTransitionScreen() {
     final vocabCount = _questions
-        .where((q) => q['type'] == 'Vocabulary')
+        .where((q) => q['skill'] == 'Vocabulary')
         .length;
-    final grammarCount = _questions.where((q) => q['type'] == 'Grammar').length;
-    final readingCount = _questions.where((q) => q['type'] == 'Reading').length;
-    final writingCount = _questions.where((q) => q['type'] == 'Writing').length;
+    final grammarCount = _questions.where((q) => q['skill'] == 'Grammar').length;
+    final readingCount = _questions.where((q) => q['skill'] == 'Reading').length;
+    final writingCount = _questions.where((q) => q['skill'] == 'Writing').length;
 
     return Padding(
       padding: const EdgeInsets.all(24.0),
@@ -433,7 +440,7 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
               onPressed: () {
                 // Find the first reading question index
                 final firstReadingIndex = _questions.indexWhere(
-                  (q) => q['type'] == 'Reading',
+                  (q) => q['skill'] == 'Reading',
                 );
                 if (firstReadingIndex != -1) {
                   // Start from vocab/grammar first, passage shown later
@@ -700,8 +707,12 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
   Widget _buildQuestionScreen() {
     final question = _questions[_currentIndex];
     final options = question['options'] as Map<String, dynamic>? ?? {};
-    final imageUrl = question['image_url'] as String?;
-    final questionType = (question['type'] as String?) ?? 'Vocabulary';
+    // The vocabulary function returns base64 (`image_b64`), never a URL —
+    // gpt-image models don't support response_format:"url". This previously
+    // read a non-existent `image_url` key, so any image-mode question would
+    // have silently rendered with no picture.
+    final imageB64 = question['image_b64'] as String?;
+    final questionType = (question['skill'] as String?) ?? 'Vocabulary';
     final contextText = question['context_text'] as String?;
 
     final questionText = (question['question'] as String?)?.isNotEmpty == true
@@ -835,11 +846,11 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
                   ],
 
                   // ── Vocabulary: image ─────────────────────────────────
-                  if (imageUrl != null) ...[
+                  if (imageB64 != null) ...[
                     ClipRRect(
                       borderRadius: BorderRadius.circular(20),
-                      child: Image.network(
-                        imageUrl,
+                      child: Image.memory(
+                        base64Decode(imageB64),
                         height: 160,
                         fit: BoxFit.contain,
                         errorBuilder: (_, __, ___) => const SizedBox.shrink(),

@@ -8,7 +8,7 @@ void main() async {
 
   await Supabase.initialize(
     url: 'https://cldngeqtuyxwuvtsaocm.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsZG5nZXF0dXl4d3V2dHNhb2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1NDQzNTgsImV4cCI6MjA5MTEyMDM1OH0.vYL9Cn81OptK7UVyZzbjpLxS_uyzPOiSrLyqQX9X6Nk',
+    publishableKey: 'sb_publishable_NJvrBZXKXKoeGp4e-GzI3A_yIkohgjh',
   );
 
   final prefs = await SharedPreferences.getInstance();

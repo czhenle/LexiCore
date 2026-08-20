@@ -67,11 +67,13 @@ The correct answer is "${correct_answer ?? answer ?? ""}". Use this ONLY to guid
     ];
 
     const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+    // gpt-5.6-luna is a reasoning model: `temperature` is rejected, and the
+    // old `max_tokens: 120` cap would be consumed by reasoning tokens before
+    // any hint text was produced — yielding an empty reply. The "under 40
+    // words" rule in SYSTEM keeps replies short instead.
     const r = await openai.chat.completions.create({
       model: MODEL,
       messages: chat,
-      temperature: 0.6,
-      max_tokens: 120,
     });
 
     const reply = r.choices[0].message.content?.trim() ||

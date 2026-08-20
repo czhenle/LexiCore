@@ -1,4 +1,4 @@
-import OpenAI from "npm:openai";
+import OpenAI from "https://deno.land/x/openai/mod.ts";
 import { ChatOpenAI } from "npm:@langchain/openai";
 import { ChatPromptTemplate } from "npm:@langchain/core/prompts";
 import { z } from "npm:zod";
@@ -48,6 +48,19 @@ const imageSchema = z.object({
   })),
 });
 
+// Spelling: pairs with image mode at Standard <= 2 so picture-matching never
+// replaces real spelling practice (LexiCore_Syllabus_Specification.md
+// section 3). No options/correct_answer — graded by exact string match
+// client-side since spelling has one objectively correct answer.
+const spellingSchema = z.object({
+  questions: z.array(z.object({
+    word: z.string().describe("The target word to spell, lowercase"),
+    hint: z.string().describe("A simple definition or clue that does NOT reveal any letters of the word"),
+    image_keyword: z.string().describe("A single simple concrete noun for DALL-E matching the word"),
+    explanation: z.string().describe("A brief note on the word's meaning or usage"),
+  })),
+});
+
 const contextSchema = z.object({
   questions: z.array(z.object({
     context_text: z.string().describe("A sentence with ___ as the blank"),
@@ -93,7 +106,7 @@ Deno.serve(async (req) => {
         ? `Prefer words related to "${topic.trim()}" where natural, but you may also draw from this broader pool: ${wordPool}.`
         : `Pick from this broad pool: ${wordPool}.`;
 
-    const llm = new ChatOpenAI({ model: "gpt-5.6-luna", temperature: 0.9 });
+    const llm = new ChatOpenAI({ model: "gpt-5.6-luna"});
 
     // ── IMAGE MODE ───────────────────────────────────────────────────────────
     if (mode === "image") {
@@ -135,6 +148,66 @@ Deno.serve(async (req) => {
         }),
       );
       return jsonResponse({ questions: withImages });
+    }
+
+    // ── SPELLING MODE ────────────────────────────────────────────────────────
+    if (mode === "spelling") {
+      const structuredLlm = llm.withStructuredOutput(spellingSchema);
+      const prompt = ChatPromptTemplate.fromMessages([
+        ["system", `You are an English teacher for Standard ${level} learners.`],
+        [
+          "human",
+          `Create 5 spelling practice items.
+          ${poolInstruction}
+          Pick 5 DIFFERENT simple, concrete words appropriate for Standard ${level}.
+          For each, give a short child-friendly hint (a simple definition or clue) that does NOT reveal any letters of the word or an obvious rhyme, and an image_keyword suitable for a simple illustration of the word.`,
+        ],
+      ]);
+      const result = await prompt.pipe(structuredLlm).invoke({});
+
+      const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+      const withImages = await Promise.all(
+        result.questions.map(async (q) => {
+          try {
+            const img = await openai.images.generate({
+              model: "gpt-image-2-2026-04-21",
+              prompt:
+                `Simple, cute, kid-friendly illustration of a ${q.image_keyword}. Flat vector art style, clean white background, no text, no labels.`,
+              n: 1,
+              size: "1024x1024",
+              quality: "low",
+            });
+            const b64 = img.data?.[0]?.b64_json ?? null;
+            return { ...q, image_b64: b64 };
+          } catch (e) {
+            console.error("image gen failed:", e);
+            return { ...q, image_b64: null };
+          }
+        }),
+      );
+      return jsonResponse({ questions: withImages });
+    }
+
+    // ── SYNONYMS & ANTONYMS MODE ─────────────────────────────────────────────
+    if (mode === "synonyms") {
+      const structuredLlm = llm.withStructuredOutput(baseSchema);
+      const prompt = ChatPromptTemplate.fromMessages([
+        ["system", `You are an English teacher for Standard ${level} learners.`],
+        [
+          "human",
+          `Create 5 synonym/antonym vocabulary questions.
+          ${poolInstruction}
+          Mix the two question styles across the 5 questions:
+          - "Which word means the SAME as ___?" (synonym)
+          - "Which word means the OPPOSITE of ___?" (antonym)
+          Example: "Which word means the same as 'happy'?" A) sad B) glad C) angry D) tired
+          Example: "Which word means the opposite of 'big'?" A) huge B) tall C) small D) wide
+          All 4 options must be plausible and the same part of speech; only one is correct.
+          Keep vocabulary appropriate for Standard ${level} students.`,
+        ],
+      ]);
+      const result = await prompt.pipe(structuredLlm).invoke({});
+      return jsonResponse(result);
     }
 
     // ── MEANING MODE ─────────────────────────────────────────────────────────
@@ -206,7 +279,7 @@ Deno.serve(async (req) => {
     }
 
     return jsonResponse({
-      error: "Invalid mode. Use: image | meaning | context",
+      error: "Invalid mode. Use: image | spelling | meaning | context | synonyms",
     }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

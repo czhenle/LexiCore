@@ -38,7 +38,11 @@ dependencies:
   shared_preferences: ^2.2.3
   flutter_secure_storage: ^10.0.0
   supabase_flutter: ^2.5.0
-  http: ^1.6.0
+  # Pinned below 1.6.0: that release's own source uses Dart's experimental
+  # null-aware-elements syntax, which this project's Dart 3.11.1 doesn't
+  # support yet, and breaks compilation of every package that touches
+  # http.Response (gotrue/postgrest/storage/realtime/functions clients).
+  http: '>=1.2.0 <1.6.0'
 
 dev_dependencies:
   flutter_test:

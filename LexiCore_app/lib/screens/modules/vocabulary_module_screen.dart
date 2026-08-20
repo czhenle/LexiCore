@@ -15,7 +15,12 @@ const Color _textDark = Color(0xFF1A1A2E);
 const Color _textMid = Color(0xFF6B7280);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ENTRY SCREEN — choose practice mode
+// ENTRY SCREEN — choose practice mode. Modules is the full-breadth practice
+// area (every type of question is available at every Standard) — it's the
+// syllabus/generation prompt that scales difficulty and complexity per
+// Standard, not which modes are shown. (Today's Task, by contrast, is the
+// narrow adaptive pick for a specific weakness; a student can always come
+// here afterward for broader practice.)
 // ─────────────────────────────────────────────────────────────────────────────
 class VocabularyModuleScreen extends StatelessWidget {
   const VocabularyModuleScreen({super.key});
@@ -134,6 +139,24 @@ class VocabularyModuleScreen extends StatelessWidget {
                 tag: 'Writing',
                 tagColor: const Color(0xFF4DB6AC),
               ),
+              _modeCard(
+                context,
+                icon: Icons.compare_arrows_rounded,
+                title: 'Synonyms & Antonyms',
+                description: 'Choose a word that means the same, or the opposite',
+                mode: 'synonyms',
+                tag: 'Vocabulary',
+                tagColor: const Color(0xFFEC407A),
+              ),
+              _modeCard(
+                context,
+                icon: Icons.spellcheck_rounded,
+                title: 'Spelling',
+                description: 'Look at a picture and type the word correctly',
+                mode: 'spelling',
+                tag: 'Spelling',
+                tagColor: const Color(0xFF7E57C2),
+              ),
             ],
           ),
         ),
@@ -244,7 +267,7 @@ class VocabularyModuleScreen extends StatelessWidget {
 // QUIZ SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 class VocabularyQuizScreen extends StatefulWidget {
-  final String mode; // 'image' | 'meaning' | 'context'
+  final String mode; // 'image' | 'spelling' | 'meaning' | 'context'
 
   const VocabularyQuizScreen({super.key, required this.mode});
 
@@ -265,15 +288,29 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
 
   List<dynamic> _questions = [];
   final Map<int, String> _answers = {};
+  // Explicit per-question correctness — spelling is graded by exact string
+  // match against `word` rather than `_answers[i] == correct_answer`.
+  final Map<int, bool> _correctness = {};
+  final _answerCtrl = TextEditingController();
 
   late CurriculumUnit _currentUnit;
   int _detectedLevel = 3;
+
+  bool get _isSpelling => widget.mode == 'spelling';
 
   @override
   void initState() {
     super.initState();
     _loadQuiz();
   }
+
+  @override
+  void dispose() {
+    _answerCtrl.dispose();
+    super.dispose();
+  }
+
+  String _normalize(String s) => s.trim().toLowerCase();
 
   Future<void> _loadQuiz() async {
     setState(() {
@@ -306,9 +343,12 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
         widget.mode,
       );
 
-      if (data != null && data['questions'] != null) {
+      // Guard on isNotEmpty, not just non-null: a `{"questions": []}` body
+      // would otherwise pass and then throw RangeError on _questions[0].
+      final qs = data?['questions'] as List?;
+      if (qs != null && qs.isNotEmpty) {
         setState(() {
-          _questions = data['questions'];
+          _questions = qs;
           _isLoading = false;
         });
       } else {
@@ -328,10 +368,25 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
 
   void _selectAnswer(String key) {
     if (_hasAnswered) return;
+    final q = _questions[_currentIndex];
     setState(() {
       _selectedAnswer = key;
       _hasAnswered = true;
       _answers[_currentIndex] = key;
+      _correctness[_currentIndex] = key == q['correct_answer'];
+    });
+  }
+
+  void _submitSpelling() {
+    if (_hasAnswered) return;
+    final typed = _answerCtrl.text;
+    if (typed.trim().isEmpty) return;
+    final q = _questions[_currentIndex];
+    setState(() {
+      _hasAnswered = true;
+      _answers[_currentIndex] = typed;
+      _correctness[_currentIndex] =
+          _normalize(typed) == _normalize((q['word'] ?? '').toString());
     });
   }
 
@@ -341,6 +396,7 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
         _currentIndex++;
         _selectedAnswer = _answers[_currentIndex];
         _hasAnswered = _answers.containsKey(_currentIndex);
+        _answerCtrl.text = _answers[_currentIndex] ?? '';
       });
     } else {
       _finish();
@@ -348,10 +404,7 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
   }
 
   Future<void> _finish() async {
-    int correct = 0;
-    for (int i = 0; i < _questions.length; i++) {
-      if (_answers[i] == _questions[i]['correct_answer']) correct++;
-    }
+    final correct = _correctness.values.where((v) => v).length;
     final score = _questions.isEmpty
         ? 0
         : ((correct / _questions.length) * 100).round();
@@ -366,8 +419,8 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
       await MasteryService().recordLegacyQuizCompletion(
         skill: 'Vocabulary',
         topic: _currentUnit.topic,
-        correctness: List.generate(
-            _questions.length, (i) => _answers[i] == _questions[i]['correct_answer']),
+        correctness:
+            List.generate(_questions.length, (i) => _correctness[i] ?? false),
         standard: _detectedLevel,
       );
     } catch (e) {
@@ -451,21 +504,28 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Image (guess mode)
+              // Image (guess / spelling mode). Wrapped in Center because the
+              // parent Column stretches its children to full width, which
+              // would otherwise override the width below — and with
+              // BoxFit.cover that meant the illustration got cropped.
+              // BoxFit.contain keeps the whole picture visible.
               if (imageB64 != null) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.memory(
-                    base64Decode(imageB64),
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.image_not_supported_outlined,
-                      size: 48,
+                Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(
+                      base64Decode(imageB64),
+                      width: 180,
+                      height: 180,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.image_not_supported_outlined,
+                        size: 48,
+                      ),
                     ),
                   ),
                 ),
+                const SizedBox(height: 16),
               ],
 
               // Context sentence (context mode)
@@ -494,7 +554,7 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
 
               // Question
               Text(
-                q['question'] ?? '',
+                _isSpelling ? 'How do you spell it?' : (q['question'] ?? ''),
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -503,10 +563,72 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (_isSpelling && q['hint'] != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  q['hint'].toString(),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: _textMid,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
               const SizedBox(height: 24),
 
-              // Options
-              ...options.entries.map((entry) {
+              // Spelling: a text field, graded by exact match against `word`
+              if (_isSpelling) ...[
+                TextField(
+                  controller: _answerCtrl,
+                  enabled: !_hasAnswered,
+                  textAlign: TextAlign.center,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Type the word…',
+                    border:
+                        OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                if (_hasAnswered) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: (_correctness[_currentIndex] ?? false)
+                          ? Colors.green.shade50
+                          : Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(children: [
+                      Icon(
+                        (_correctness[_currentIndex] ?? false)
+                            ? Icons.check_circle
+                            : Icons.cancel,
+                        color: (_correctness[_currentIndex] ?? false)
+                            ? Colors.green.shade700
+                            : Colors.red.shade700,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          (_correctness[_currentIndex] ?? false)
+                              ? 'Correct!'
+                              : 'The correct spelling is "${q['word']}"',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: (_correctness[_currentIndex] ?? false)
+                                ? Colors.green.shade800
+                                : Colors.red.shade800,
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ],
+              ] else
+                // Options
+                ...options.entries.map((entry) {
                 final isSelected = _selectedAnswer == entry.key;
                 final isCorrect = entry.key == correct;
                 Color bg = const Color(0xFFFFF3E0);
@@ -615,7 +737,11 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
 
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _hasAnswered ? _next : null,
+                onPressed: _isSpelling
+                    ? (_hasAnswered
+                        ? _next
+                        : (_answerCtrl.text.trim().isNotEmpty ? _submitSpelling : null))
+                    : (_hasAnswered ? _next : null),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _vocabColor,
                   disabledBackgroundColor: Colors.grey[300],
@@ -625,9 +751,11 @@ class _VocabularyQuizScreenState extends State<VocabularyQuizScreen> {
                   ),
                 ),
                 child: Text(
-                  _currentIndex < _questions.length - 1
-                      ? 'Next question'
-                      : 'See my result',
+                  _isSpelling && !_hasAnswered
+                      ? 'Submit'
+                      : (_currentIndex < _questions.length - 1
+                          ? 'Next question'
+                          : 'See my result'),
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,

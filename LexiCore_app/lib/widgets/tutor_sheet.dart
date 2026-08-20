@@ -62,7 +62,12 @@ class _TutorSheetState extends State<TutorSheet> {
       if (mounted) {
         setState(() => _messages.add({'role': 'assistant', 'content': reply}));
       }
-    } catch (_) {
+    } catch (e) {
+      // Keep the child-facing message gentle, but never swallow the cause —
+      // a silent catch here hid the fact that `tutor` was running a stale
+      // deploy. Unlike the practice loop this fallback records nothing, so a
+      // friendly reply is safe; it just must stay diagnosable.
+      debugPrint('tutor invoke failed: $e');
       if (mounted) {
         setState(() => _messages.add({
               'role': 'assistant',

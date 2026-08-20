@@ -12,11 +12,10 @@ class MasteryService {
   Map<String, Map<int, String>>? _rungFormats;
 
   /// Sub-skill taxonomy: [{code, skill, name, standard_min, standard_max,
-  /// sort_order}]. Cached after first load.
+  /// sort_order, topic_group}]. Cached after first load.
   Future<List<Map<String, dynamic>>> taxonomy() async {
-    _taxonomy ??= List<Map<String, dynamic>>.from(await _sb
-        .from('sub_skills')
-        .select('code, skill, name, standard_min, standard_max, sort_order'));
+    _taxonomy ??= List<Map<String, dynamic>>.from(await _sb.from('sub_skills').select(
+        'code, skill, name, standard_min, standard_max, sort_order, topic_group'));
     return _taxonomy!;
   }
 
@@ -236,6 +235,215 @@ class MasteryService {
       weakest: ordered.last.key,
       overall: totalN > 0 ? (totalRung / totalN) / 5.0 : 0.0,
     );
+  }
+
+  // ── WEEKLY SCHEDULE ────────────────────────────────────────────────────
+  // Stored in `study_schedules.plan` (one row per user) so it's generated
+  // ONCE per week and just read for the rest of it, instead of being
+  // recomputed live on every visit. Regenerates when the stored plan is for
+  // an earlier week, or on demand (e.g. right after the Saturday
+  // assessment, once that exists) via regenerateWeeklySchedule().
+  static const _weekdayNames = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+  ];
+
+  String _iso(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  DateTime _mondayOf(DateTime d) =>
+      DateTime(d.year, d.month, d.day).subtract(Duration(days: d.weekday - 1));
+
+  String _taskLabel(String skill, String subSkillName) {
+    switch (skill) {
+      case 'Writing':
+        return 'Write: $subSkillName';
+      case 'Reading':
+        return 'Read & Answer: $subSkillName';
+      case 'Vocabulary':
+        return 'Learn: $subSkillName';
+      default:
+        return 'Practice: $subSkillName';
+    }
+  }
+
+  Future<Map<String, dynamic>?> _storedPlan() async {
+    final uid = _uid;
+    if (uid == null) return null;
+    final row = await _sb
+        .from('study_schedules')
+        .select()
+        .eq('user_id', uid)
+        .maybeSingle();
+    return row?['plan'] as Map<String, dynamic>?;
+  }
+
+  /// This week's plan — generates and persists a fresh one if none exists
+  /// yet or the stored one is for an earlier week.
+  Future<Map<String, dynamic>?> getOrGenerateWeeklySchedule() async {
+    final monday = _mondayOf(DateTime.now());
+    final existing = await _storedPlan();
+    if (existing != null &&
+        existing['week_start'] == _iso(monday) &&
+        existing['days'] is List) {
+      return existing;
+    }
+    return regenerateWeeklySchedule();
+  }
+
+  /// Builds a brand-new plan for the CURRENT week and persists it. The
+  /// weakest skill gets Monday + Wednesday (2 of 5 weekdays); each other
+  /// skill gets one day — same weighting the schedule used before, just
+  /// computed once and stored instead of recomputed on every visit. Saturday
+  /// is reserved for the weekly assessment, Sunday for rest, per
+  /// LexiCore_Learning_System_ELO_Specification.md section 6.
+  Future<Map<String, dynamic>?> regenerateWeeklySchedule() async {
+    final uid = _uid;
+    if (uid == null) return null;
+    final summary = await masterySummary();
+    if (summary == null) return null;
+
+    final standard = await studentStandard();
+    final states = await loadMastery(standard);
+    final tax = await taxonomy();
+    final codeToSkill = {for (final t in tax) t['code'] as String: t['skill'] as String};
+    final codeToName = {for (final t in tax) t['code'] as String: t['name'] as String};
+    String skillOf(String c) => codeToSkill[c] ?? 'Grammar';
+
+    final ordered = summary.avgRungBySkill.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value)); // weakest first
+    final skills = ordered.map((e) => e.key).toList();
+    while (skills.length < 4) {
+      skills.add(skills.isEmpty ? 'Vocabulary' : skills.last);
+    }
+    const rankForDay = [0, 1, 0, 2, 3]; // Mon..Fri -> weakest/2nd/weakest/3rd/4th
+
+    String? weakestFocusName;
+    final days = <Map<String, dynamic>>[];
+    for (var i = 0; i < 5; i++) {
+      final skill = skills[rankForDay[i]];
+      final skillStates =
+          states.where((s) => skillOf(s.subSkillCode) == skill).toList();
+      final day = <String, dynamic>{'day': _weekdayNames[i], 'skill': skill};
+      if (skillStates.isNotEmpty) {
+        final picked = AdaptivePolicy().selectNext(skillStates, skillOf);
+        final name = codeToName[picked.subSkillCode] ?? picked.subSkillCode;
+        day['sub_skill_code'] = picked.subSkillCode;
+        day['task_label'] = _taskLabel(skill, name);
+        if (skill == skills[0] && weakestFocusName == null) {
+          weakestFocusName = name;
+        }
+      } else {
+        day['task_label'] = 'Practice $skill';
+      }
+      days.add(day);
+    }
+    days.add({
+      'day': 'Saturday',
+      'type': 'assessment',
+      'task_label': 'Weekly Assessment',
+    });
+    days.add({'day': 'Sunday', 'type': 'rest', 'task_label': 'Rest & Self-Revision'});
+
+    final weakest = skills[0];
+    final weekGoal = weakestFocusName != null
+        ? 'This week\'s goal: improve your $weakest — focus on $weakestFocusName.'
+        : 'This week\'s goal: improve your $weakest.';
+
+    final plan = {
+      'week_start': _iso(_mondayOf(DateTime.now())),
+      'week_goal': weekGoal,
+      'weakest_skill': weakest,
+      'days': days,
+      'completed_days': <String>[],
+    };
+    await _sb.from('study_schedules').upsert({
+      'user_id': uid,
+      'plan': plan,
+      'created_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'user_id');
+    return plan;
+  }
+
+  /// Today's entry from the (possibly freshly-generated) weekly plan.
+  Future<Map<String, dynamic>?> getTodayTask() async {
+    final plan = await getOrGenerateWeeklySchedule();
+    if (plan == null) return null;
+    final days = (plan['days'] as List).cast<Map<String, dynamic>>();
+    final todayName = _weekdayNames[DateTime.now().weekday - 1];
+    final match = days.where((d) => d['day'] == todayName);
+    return match.isEmpty ? null : match.first;
+  }
+
+  /// Marks today's task done in the stored plan — call after the student
+  /// finishes the session Today's Task launched.
+  Future<void> markTodayTaskComplete() async {
+    final uid = _uid;
+    if (uid == null) return;
+    final plan = await getOrGenerateWeeklySchedule();
+    if (plan == null) return;
+    final todayName = _weekdayNames[DateTime.now().weekday - 1];
+    final completed = Set<String>.from(
+        (plan['completed_days'] as List?)?.cast<String>() ?? const []);
+    completed.add(todayName);
+    plan['completed_days'] = completed.toList();
+    await _sb.from('study_schedules').upsert({
+      'user_id': uid,
+      'plan': plan,
+      'created_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'user_id');
+  }
+
+  // ── WEEKLY ASSESSMENT ──────────────────────────────────────────────────
+  // Saturday's 40-question check (10/skill), per
+  // LexiCore_Learning_System_ELO_Specification.md section 6/38 — stronger
+  // evidence than ordinary practice, but routed through the exact same
+  // generate -> grade -> skill_mastery pipeline via AdaptivePracticeScreen's
+  // fixed-queue mode.
+
+  /// Builds the 40-item queue: for each of the 4 skills, the 2 weakest
+  /// sub-skills share 10 questions (via distributeQuestions — 5/5, or
+  /// e.g. 6/4 if their current mastery differs enough to weight practice
+  /// toward the weaker of the two... no, evenly split, simplicity over
+  /// micro-weighting here). Skipped skills the student has no seeded
+  /// sub-skills for yet are simply left out of the 40.
+  Future<List<PracticeQueueItem>> buildWeeklyAssessmentQueue() async {
+    final standard = await studentStandard();
+    final states = await loadMastery(standard);
+    final tax = await taxonomy();
+    final codeToSkill = {for (final t in tax) t['code'] as String: t['skill'] as String};
+    String skillOf(String c) => codeToSkill[c] ?? 'Grammar';
+
+    final queue = <PracticeQueueItem>[];
+    for (final skill in const ['Vocabulary', 'Grammar', 'Reading', 'Writing']) {
+      final skillStates = states.where((s) => skillOf(s.subSkillCode) == skill).toList()
+        ..sort((a, b) => a.masteredRung().compareTo(b.masteredRung())); // weakest first
+      if (skillStates.isEmpty) continue;
+      final picks = skillStates.take(2).map((s) => s.subSkillCode).toList();
+      queue.addAll(distributeQuestions(picks, 10));
+    }
+    return queue;
+  }
+
+  /// Records one Saturday assessment's result — stronger evidence than
+  /// ordinary practice (spec section 38), stored as a snapshot for
+  /// progress-over-time, separate from the ongoing skill_mastery updates
+  /// each answered item already made via the normal recordAttempt path.
+  Future<void> saveWeeklyCheckin({
+    required int itemsAnswered,
+    required int itemsCorrect,
+  }) async {
+    final uid = _uid;
+    if (uid == null) return;
+    final summary = await masterySummary();
+    await _sb.from('weekly_checkins').upsert({
+      'user_id': uid,
+      'week_start': _iso(_mondayOf(DateTime.now())),
+      'overall': summary?.overall ?? 0,
+      'avg_rung_by_skill': summary?.avgRungBySkill ?? <String, double>{},
+      'items_answered': itemsAnswered,
+      'items_correct': itemsCorrect,
+      'taken_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'user_id,week_start');
   }
 }
 

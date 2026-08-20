@@ -5,13 +5,6 @@ import '../../services/mastery_service.dart';
 import '../../widgets/tutor_sheet.dart';
 import 'result_screen.dart';
 
-/// One entry in a fixed practice queue: practise this sub-skill `count` times.
-class PracticeQueueItem {
-  final String subSkillCode;
-  final int count;
-  const PracticeQueueItem(this.subSkillCode, this.count);
-}
-
 /// The adaptive practice loop (PS1). Reads the seeded mastery map, uses
 /// AdaptivePolicy to choose the next sub-skill + rung, serves an item, and
 /// writes the answer back through the learner model — updating ability live.
@@ -33,6 +26,12 @@ class AdaptivePracticeScreen extends StatefulWidget {
   final Color? resultColor;
   final IconData? resultIcon;
 
+  /// Fired once, right when a fixed-queue session finishes (before
+  /// navigating to ResultScreen) — lets a caller (e.g. the weekly
+  /// assessment) record the session's totals without this screen needing to
+  /// know anything about where they get saved.
+  final void Function(int itemsAnswered, int itemsCorrect)? onSessionComplete;
+
   const AdaptivePracticeScreen({
     super.key,
     this.focusSkill,
@@ -40,6 +39,7 @@ class AdaptivePracticeScreen extends StatefulWidget {
     this.resultModuleName,
     this.resultColor,
     this.resultIcon,
+    this.onSessionComplete,
   });
 
   @override
@@ -77,6 +77,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   String? _selected;
   bool _answered = false;
   bool _fetching = false;
+  /// Non-null when the last generate call failed — drives the retry view.
+  String? _loadError;
   final _answerCtrl = TextEditingController();
 
   // Open-item self-assessment: the answer is revealed immediately, and the
@@ -208,6 +210,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       _focus = focus;
       _item = null;
       _fetching = true;
+      _loadError = null;
       _selected = null;
       _answered = false;
       _awaitingSelfAssessment = false;
@@ -215,17 +218,42 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       _answerCtrl.clear();
     });
 
+    // No fake-content fallback: if generation fails the student sees a real
+    // error and can retry. Substituting a placeholder item (as this used to)
+    // silently recorded bogus attempts into skill_mastery/item_attempts and
+    // corrupted the student's ability score.
     Map<String, dynamic> item;
     try {
       item = await _fetchItem(focus, skill, name, format, recentErrors);
-    } catch (_) {
-      item = _stubItem(skill, name, focus.rungNumber, format);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _fetching = false;
+        _item = null;
+        // Roll the queue back so retrying re-serves THIS item rather than
+        // skipping it — otherwise one failure silently shortens the session.
+        if (widget.fixedQueue != null && _queuePos > 0) _queuePos--;
+        _loadError = _describeError(e);
+      });
+      return;
     }
     if (!mounted) return;
     setState(() {
       _item = item;
+      _loadError = null;
       _fetching = false;
     });
+  }
+
+  /// Turns a fetch failure into something a child can act on, keeping the
+  /// technical cause for the debug line underneath.
+  String _describeError(Object e) {
+    if (e is FunctionException) {
+      final detail = e.details ?? e.reasonPhrase ?? '';
+      return 'generate failed (HTTP ${e.status})'
+          '${detail.toString().isEmpty ? '' : ': $detail'}';
+    }
+    return e.toString();
   }
 
   /// Calls the `generate` Edge Function and normalises the returned item.
@@ -243,8 +271,13 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       'recent_errors': recentErrors,
     });
     final data = res.data;
+    // A 200 with item:null is the validate-and-repair loop giving up after
+    // MAX_ATTEMPTS — surface the QA issues rather than a generic message.
     if (data is! Map || data['item'] == null) {
-      throw Exception('generate returned no item');
+      final qa = data is Map ? data['qa'] : null;
+      throw Exception(
+          'generate produced no valid item for format "$format"'
+          '${qa == null ? '' : ' — QA: $qa'}');
     }
     final item = Map<String, dynamic>.from(data['item'] as Map);
     item['format'] = format;
@@ -253,32 +286,6 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     item['rung'] = focus.rungNumber;
     item['is_choice'] = item['options'] != null; // choice vs open item
     return item;
-  }
-
-  // ── STUB ITEM SOURCE — replace with the `generate` Edge Function ──────────
-  Map<String, dynamic> _stubItem(
-      String skill, String subSkillName, int rung, String format) {
-    final opts = [
-      'The correct answer',
-      'A wrong option',
-      'Another wrong one',
-      'Not this either',
-    ]..shuffle();
-    final keys = ['A', 'B', 'C', 'D'];
-    final correctKey = keys[opts.indexOf('The correct answer')];
-    return {
-      'stub': true,
-      'is_choice': true,
-      'skill': skill,
-      'sub_skill_name': subSkillName,
-      'rung': rung,
-      'format': format,
-      'question':
-          'Placeholder item — tap “The correct answer” to answer correctly, '
-          'or a wrong one to watch the ability drop.',
-      'options': {for (var i = 0; i < 4; i++) keys[i]: opts[i]},
-      'correct_answer': correctKey,
-    };
   }
 
   Future<void> _submit() async {
@@ -393,6 +400,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         .map((q) => _codeToName[q.subSkillCode] ?? q.subSkillCode)
         .toSet()
         .join(', ');
+    widget.onSessionComplete?.call(_sessionAnswered, _sessionCorrect);
     Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => ResultScreen(
         moduleName: widget.resultModuleName ?? 'Practice',
@@ -465,7 +473,71 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     );
   }
 
+  /// Shown when generation genuinely failed. Deliberately does NOT record an
+  /// attempt — nothing reaches skill_mastery/item_attempts from here.
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('😕', style: TextStyle(fontSize: 48)),
+            const SizedBox(height: 16),
+            const Text(
+              "We couldn't make your question right now.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: _navy, fontSize: 17, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "This is a problem on our side, not yours — your score hasn't changed.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.black54, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _next,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _blue,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              label: const Text('Try again',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+            const SizedBox(height: 28),
+            // Technical detail — collapsed so it never confronts a child,
+            // but available when debugging a deploy/contract problem.
+            ExpansionTile(
+              title: const Text('Technical details',
+                  style: TextStyle(fontSize: 12, color: Colors.black45)),
+              tilePadding: EdgeInsets.zero,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SelectableText(
+                    _loadError ?? '',
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.black54, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLoop() {
+    if (_loadError != null) return _errorView();
+
     if (_fetching || _item == null) {
       return Padding(
         padding: const EdgeInsets.all(16),
