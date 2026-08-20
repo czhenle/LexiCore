@@ -1,4 +1,4 @@
-import OpenAI from "https://deno.land/x/openai/mod.ts";
+import OpenAI from "npm:openai";
 import { ChatOpenAI } from "npm:@langchain/openai";
 import { ChatPromptTemplate } from "npm:@langchain/core/prompts";
 import { z } from "npm:zod";
