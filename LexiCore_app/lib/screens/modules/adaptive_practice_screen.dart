@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/learner_model.dart';
@@ -32,6 +34,12 @@ class AdaptivePracticeScreen extends StatefulWidget {
   /// know anything about where they get saved.
   final void Function(int itemsAnswered, int itemsCorrect)? onSessionComplete;
 
+  /// When true, renders the older bespoke quiz look (progress-bar header,
+  /// filled colored option tiles) used by Grammar/Writing's topic-picker
+  /// modules instead of the generic adaptive-practice UI. Purely visual —
+  /// the underlying generate/grade/persist engine is identical either way.
+  final bool moduleStyle;
+
   const AdaptivePracticeScreen({
     super.key,
     this.focusSkill,
@@ -40,6 +48,7 @@ class AdaptivePracticeScreen extends StatefulWidget {
     this.resultColor,
     this.resultIcon,
     this.onSessionComplete,
+    this.moduleStyle = false,
   });
 
   @override
@@ -50,6 +59,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   static const _navy = Color(0xFF003C8F);
   static const _blue = Color(0xFF1E88E5);
   static const _bg = Color(0xFFF0F8FF);
+  static const _moduleTextDark = Color(0xFF1A1A2E);
+  static const _moduleTextMid = Color(0xFF6B7280);
+
+  Color get _accent => widget.resultColor ?? _blue;
 
   // Rung -> format per skill. Fallback only — the live source of truth is the
   // `rung_formats` table (see MasteryService.rungFormats()), used whenever
@@ -81,9 +94,13 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   String? _loadError;
   final _answerCtrl = TextEditingController();
 
-  // Open-item self-assessment: the answer is revealed immediately, and the
-  // student marks it right/wrong themselves rather than an exact-match check.
-  bool _awaitingSelfAssessment = false;
+  // Open-item grading: the `grade` Edge Function judges the student's typed
+  // response (LLM-as-judge) instead of asking the student to self-report.
+  bool _grading = false;
+  String? _gradeFeedback;
+  // Fallback ONLY — if the grade call itself fails, degrade to the old
+  // reveal-answer + self-report buttons rather than dead-ending the loop.
+  bool _gradeUnavailable = false;
   String? _pendingResponse;
 
   // Fixed-queue mode (widget.fixedQueue != null): (subSkillCode, count) pairs
@@ -213,7 +230,9 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       _loadError = null;
       _selected = null;
       _answered = false;
-      _awaitingSelfAssessment = false;
+      _grading = false;
+      _gradeFeedback = null;
+      _gradeUnavailable = false;
       _pendingResponse = null;
       _answerCtrl.clear();
     });
@@ -298,23 +317,62 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       await _gradeAndPersist(correct, response, isChoice: true);
       return;
     }
-    // Open item: no exact-match grading (a poor fit for free-text answers —
-    // validation/AI-grading is out of scope this phase). Reveal the model's
-    // answer/explanation immediately and let the student self-assess instead.
+    // Open item: judged by the `grade` Edge Function (LLM-as-judge) rather
+    // than asking the student to self-report their own correctness.
     final typed = _answerCtrl.text.trim();
     if (typed.isEmpty) return;
     setState(() {
       _pendingResponse = typed;
-      _awaitingSelfAssessment = true;
       _answered = true;
+      _grading = true;
+      _gradeFeedback = null;
+      _gradeUnavailable = false;
     });
+    await _gradeOpenResponse(typed);
   }
 
-  /// Called from the "I got it right" / "I need more practice" buttons that
-  /// follow an open item's revealed answer.
+  /// Calls the `grade` Edge Function to judge a typed open-item response.
+  /// Falls back to the old self-report UI (never dead-ends the loop) if the
+  /// grading call itself fails — see `_gradeUnavailable`.
+  Future<void> _gradeOpenResponse(String response) async {
+    try {
+      final res =
+          await Supabase.instance.client.functions.invoke('grade', body: {
+        'question': _item?['question'],
+        'student_response': response,
+        'model_answer': _item?['answer'],
+        'explanation': _item?['explanation'],
+        'sub_skill_name': _item?['sub_skill_name'],
+        'target_word': _item?['target_word'],
+        'rung': _item?['rung'],
+        'standard': _standard,
+      });
+      final data = res.data;
+      if (data is! Map || data['correct'] is! bool || data['feedback'] == null) {
+        throw Exception('grade returned an invalid verdict');
+      }
+      final correct = data['correct'] as bool;
+      if (!mounted) return;
+      setState(() {
+        _grading = false;
+        _gradeFeedback = data['feedback'].toString();
+      });
+      await _gradeAndPersist(correct, response, isChoice: false);
+    } catch (e) {
+      debugPrint('grade call failed: $e');
+      if (!mounted) return;
+      setState(() {
+        _grading = false;
+        _gradeUnavailable = true;
+      });
+    }
+  }
+
+  /// Called from the fallback "I got it right" / "I need more practice"
+  /// buttons — only shown when `_gradeUnavailable` (the `grade` call failed).
   Future<void> _selfAssess(bool correct) async {
     final response = _pendingResponse ?? '';
-    setState(() => _awaitingSelfAssessment = false);
+    setState(() => _gradeUnavailable = false);
     await _gradeAndPersist(correct, response, isChoice: false);
   }
 
@@ -448,14 +506,16 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
-        backgroundColor: _blue,
-        foregroundColor: Colors.white,
-        title: Text(widget.focusSkill != null
-            ? '${widget.focusSkill} Practice'
-            : 'Adaptive Practice'),
-      ),
+      backgroundColor: widget.moduleStyle ? Colors.white : _bg,
+      appBar: widget.moduleStyle
+          ? _moduleAppBar()
+          : AppBar(
+              backgroundColor: _blue,
+              foregroundColor: Colors.white,
+              title: Text(widget.focusSkill != null
+                  ? '${widget.focusSkill} Practice'
+                  : 'Adaptive Practice'),
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _states.isEmpty
@@ -554,6 +614,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       );
     }
 
+    if (widget.moduleStyle) return _buildModuleLoop();
+
     final item = _item!;
     final isChoice = item['is_choice'] == true;
     return SingleChildScrollView(
@@ -603,7 +665,9 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 14)),
               child: const Text('Submit'),
             )
-          else if (_awaitingSelfAssessment) ...[
+          else if (_grading)
+            _gradingIndicator()
+          else if (_gradeUnavailable) ...[
             _revealAnswer(),
             const SizedBox(height: 12),
             Row(children: [
@@ -646,18 +710,255 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     );
   }
 
+  // ── Module-style skin (Grammar/Writing topic-picker modules) ──────────────
+  // Mirrors VocabularyQuizScreen's look — progress-bar header, filled colored
+  // option tiles — while reusing the exact same engine methods above
+  // (_submit, _selfAssess, _advance, _gradeAndPersist, checkpoint state).
+
+  PreferredSizeWidget _moduleAppBar() {
+    final total = _flatQueue.length;
+    final pos = total == 0 ? 0 : _queuePos.clamp(0, total);
+    final progress = total == 0 ? 0.0 : pos / total;
+    final topic =
+        _focus != null ? (_codeToName[_focus!.subSkillCode] ?? '') : '';
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: () => Navigator.pop(context),
+      ),
+      title: Column(
+        children: [
+          Text(topic,
+              style: TextStyle(
+                  fontSize: 12, color: _accent, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: _accent.withValues(alpha: 0.15),
+              valueColor: AlwaysStoppedAnimation(_accent),
+              minHeight: 5,
+            ),
+          ),
+        ],
+      ),
+      centerTitle: true,
+    );
+  }
+
+  Widget _buildModuleLoop() {
+    final item = _item!;
+    final isChoice = item['is_choice'] == true;
+    final options = (item['options'] as Map?)?.cast<String, dynamic>() ?? {};
+    final correct = item['correct_answer'] as String?;
+    final total = _flatQueue.length;
+    final pos = total == 0 ? 1 : _queuePos.clamp(1, total);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            total == 0 ? '' : 'Question $pos of $total',
+            style: const TextStyle(fontSize: 13, color: _moduleTextMid),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          if (_inCheckpoint) _checkpointBanner(),
+          Text(
+            item['question'] as String? ?? '',
+            style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: _moduleTextDark,
+                height: 1.4),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          if (isChoice)
+            ...options.entries
+                .map((e) => _moduleOptionTile(e.key, e.value.toString(), correct))
+          else
+            _openAnswerField(),
+          if (!_answered)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _openTutor,
+                icon: const Icon(Icons.lightbulb_outline,
+                    color: Color(0xFFF9A825)),
+                label: const Text("I'm stuck — ask Lexi for a hint"),
+              ),
+            ),
+          const SizedBox(height: 16),
+          if (!_answered)
+            ElevatedButton(
+              onPressed: _canSubmit(isChoice) ? _submit : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                disabledBackgroundColor: Colors.grey[300],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Submit',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            )
+          else if (_grading)
+            _gradingIndicator()
+          else if (_gradeUnavailable) ...[
+            _revealAnswer(),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _selfAssess(false),
+                  style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14)),
+                  child: const Text('I need more practice'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _selfAssess(true),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14)),
+                  child: const Text('I got it right'),
+                ),
+              ),
+            ]),
+          ] else ...[
+            _feedback(),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _advance,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape:
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: Text(
+                _cpFinished
+                    ? 'Continue'
+                    : _inCheckpoint
+                        ? 'Next checkpoint item ($_cpDone/$_cpItems)'
+                        : (pos < total ? 'Next question' : 'See my result'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _moduleOptionTile(String key, String label, String? correct) {
+    final isSelected = _selected == key;
+    final isCorrect = key == correct;
+    Color bg = _accent.withValues(alpha: 0.08);
+    Color tc = _moduleTextDark;
+    if (_answered) {
+      if (isCorrect) {
+        bg = Colors.green.shade100;
+        tc = Colors.green.shade800;
+      } else if (isSelected) {
+        bg = Colors.red.shade100;
+        tc = Colors.red.shade800;
+      }
+    } else if (isSelected) {
+      bg = _accent;
+      tc = Colors.white;
+    }
+    return GestureDetector(
+      onTap: _answered ? null : () => setState(() => _selected = key),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration:
+            BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+        child: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.5)),
+              child: Center(
+                child: Text(key,
+                    style: TextStyle(fontWeight: FontWeight.bold, color: tc)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label, style: TextStyle(fontSize: 14, color: tc))),
+            if (_answered && isCorrect)
+              Icon(Icons.check_circle, color: Colors.green.shade700, size: 18),
+            if (_answered && isSelected && !isCorrect)
+              Icon(Icons.cancel, color: Colors.red.shade700, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
   bool _canSubmit(bool isChoice) =>
       isChoice ? _selected != null : _answerCtrl.text.trim().isNotEmpty;
 
   Widget _openAnswerField() {
-    return TextField(
-      controller: _answerCtrl,
-      enabled: !_answered,
-      onChanged: (_) => setState(() {}), // refresh Submit button state
-      decoration: InputDecoration(
-        hintText: 'Type your answer…',
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+    final imageB64 = _item?['image_b64'] as String?;
+    final hint = _item?['hint'] as String?;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Vocabulary open items only — a picture and/or clue pointing at the
+        // one target word the student's sentence should use, shown BEFORE
+        // they type so they know what to write about.
+        if (imageB64 != null) ...[
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                base64Decode(imageB64),
+                width: 160,
+                height: 160,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) =>
+                    const Icon(Icons.image_not_supported_outlined, size: 40),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (hint != null) ...[
+          Text(hint,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey.shade700)),
+          const SizedBox(height: 12),
+        ],
+        TextField(
+          controller: _answerCtrl,
+          enabled: !_answered,
+          onChanged: (_) => setState(() {}), // refresh Submit button state
+          decoration: InputDecoration(
+            hintText: 'Type your answer…',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      ],
     );
   }
 
@@ -796,9 +1097,16 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             Text(_lastCorrect ? 'Correct!' : 'Not quite.',
                 style: const TextStyle(fontWeight: FontWeight.w700)),
           ]),
+          // Open items: prefer the grader's specific comment on THIS
+          // response over the generic "Expected: ..." line.
+          if (!isChoice && _gradeFeedback != null) ...[
+            const SizedBox(height: 6),
+            Text(_gradeFeedback!,
+                style: TextStyle(color: Colors.grey.shade800, fontSize: 13)),
+          ],
           if (!isChoice && _item?['answer'] != null) ...[
             const SizedBox(height: 6),
-            Text('Expected: ${_item!['answer']}',
+            Text('Example: ${_item!['answer']}',
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
           ],
           if (_item?['explanation'] != null) ...[
@@ -806,6 +1114,27 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             Text(_item!['explanation'].toString(),
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// Shown while the `grade` Edge Function judges a typed open-item answer.
+  Widget _gradingIndicator() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: widget.moduleStyle ? _accent : _blue),
+          ),
+          const SizedBox(width: 12),
+          const Text('Checking your answer…',
+              style: TextStyle(color: Colors.black54, fontSize: 13)),
         ],
       ),
     );

@@ -96,6 +96,16 @@ interface Item {
   answer?: string;                    // model answer for open formats
   explanation: string;
   sub_skill: string; rung: number;
+  // Vocabulary open items only — anchors the free-writing prompt to one
+  // concrete word so both the student and the grader know what's expected.
+  target_word?: string;
+  hint?: string;
+  image_keyword?: string;
+  image_b64?: string | null;
+}
+
+function isVocabOpen(p: GenParams): boolean {
+  return p.skill === "Vocabulary" && !CHOICE_FORMATS.has(p.format);
 }
 
 // ── PROMPT ──────────────────────────────────────────────────────────────────
@@ -111,7 +121,15 @@ function buildPrompt(p: GenParams): string {
       }`
     : `This is an OPEN-RESPONSE item: the student WRITES their own answer in a text box. There are no choices to pick from.
 Provide a model "answer" (what a good student response looks like) and an "explanation".
-You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase the question as "Which of the following…" or list A/B/C/D anywhere in the question text — the student cannot see any options.`;
+You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase the question as "Which of the following…" or list A/B/C/D anywhere in the question text — the student cannot see any options.${
+        isVocabOpen(p)
+          ? ` This is a VOCABULARY item, so anchor it to exactly ONE concrete target word the student's sentence must use — pick a word that fits "${p.sub_skill_name}". Also provide:
+- "target_word": that one word (lowercase).
+- "hint": a short child-friendly clue describing the word WITHOUT saying it or any part of it (e.g. for "sister": "a person older than you who is a girl").
+- "image_keyword": the same word (or a close, simple concrete synonym), phrased as a single noun a picture can clearly show DALL-E can illustrate.
+The question itself should ask the student to use the target word in a sentence (they'll see the hint and a picture, not the word itself).`
+          : ""
+      }`;
 
   // Writing's genuinely open, higher-rung formats (guided/free composition,
   // open paragraphs) need an actual word-count target and complexity
@@ -143,7 +161,9 @@ Rules:
    ${
      CHOICE_FORMATS.has(p.format)
        ? `question, format, options, correct_answer, explanation, sub_skill, rung`
-       : `question, format, answer, explanation, sub_skill, rung`
+       : isVocabOpen(p)
+         ? `question, format, answer, explanation, sub_skill, rung, target_word, hint, image_keyword`
+         : `question, format, answer, explanation, sub_skill, rung`
    }
 5. "rung" must be the bare integer ${p.rung} — not a string, and not a label
    like "${p.rung} — ...". "sub_skill" must be exactly "${p.sub_skill}".`;
@@ -169,6 +189,14 @@ function validateStructure(item: Item, p: GenParams): string[] {
     if (!item.answer || item.answer.trim().length < 1)
       issues.push("open item must include a model answer");
     if (item.options) issues.push("open item must not have options");
+    if (isVocabOpen(p)) {
+      if (!item.target_word || item.target_word.trim().length < 1)
+        issues.push("vocabulary open item must include target_word");
+      if (!item.hint || item.hint.trim().length < 1)
+        issues.push("vocabulary open item must include hint");
+      if (!item.image_keyword || item.image_keyword.trim().length < 1)
+        issues.push("vocabulary open item must include image_keyword");
+    }
   }
   // The model sometimes echoes the prompt's own rung line back verbatim
   // (e.g. "3 — CONTROLLED") instead of the bare integer. That used to fail
@@ -247,6 +275,25 @@ Deno.serve(async (req) => {
         item.rung = p.rung;
         item.sub_skill = p.sub_skill;
         item.format = p.format;
+        if (isVocabOpen(p) && item.image_keyword) {
+          // One picture per served item (not per attempt) — wrapped so an
+          // image failure never fails the whole item; the client already
+          // handles a null image_b64 gracefully (see vocabulary/index.ts).
+          try {
+            const img = await openai.images.generate({
+              model: "gpt-image-2-2026-04-21",
+              prompt:
+                `Simple, cute, kid-friendly illustration of a ${item.image_keyword}. Flat vector art style, clean white background, no text, no labels.`,
+              n: 1,
+              size: "1024x1024",
+              quality: "low",
+            });
+            item.image_b64 = img.data?.[0]?.b64_json ?? null;
+          } catch (e) {
+            console.error("image gen failed:", e);
+            item.image_b64 = null;
+          }
+        }
         return json({ item, qa, attempts: attempt }); // PASSED
       }
       // REPAIR: feed the exact failures back into the next generation.

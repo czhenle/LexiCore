@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../main.dart';
+import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
 import '../login_and_registration/login_screen.dart';
 
@@ -27,6 +28,7 @@ class _UserProfileState extends State<UserProfile> {
   final _picker = ImagePicker();
 
   String _username = '';
+  String _email = '';
   int _standard = 1;
   String _grade = 'A'; // Default grade
   String _rate = '3'; // Default rate
@@ -46,6 +48,7 @@ class _UserProfileState extends State<UserProfile> {
 
       setState(() {
         _username = (profile?['username'] as String?) ?? 'Student';
+        _email = _supabaseService.currentUser?.email ?? '';
         _standard = (profile?['standard'] as int?) ?? 1;
         _studyTime = (profile?['study_time'] as String?) ?? '';
         _grade = (profile?['grade'] as String?) ?? 'A';
@@ -187,10 +190,13 @@ class _UserProfileState extends State<UserProfile> {
   // ── Edit profile dialog ──────────────────────────────────────────────────
   void _showEditProfileDialog() {
     final usernameCtrl = TextEditingController(text: _username);
+    final emailCtrl = TextEditingController(text: _email);
     int selectedStandard = _standard;
     String selectedStudyTime = _studyTime;
     String selectedGrade = _grade;
     String selectedRate = _rate;
+    String? dialogError;
+    bool isSaving = false;
 
     final studyTimes = ['15 minutes', '30 minutes', '45 minutes', '1 hour'];
 
@@ -221,6 +227,42 @@ class _UserProfileState extends State<UserProfile> {
                 ),
                 const SizedBox(height: 12),
                 _dialogField(usernameCtrl, 'Username', Icons.face_rounded),
+                const SizedBox(height: 24),
+                Text(
+                  'Email address',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: _navyText.withValues(alpha: 0.7),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _dialogField(
+                  emailCtrl,
+                  'Email address',
+                  Icons.mail_rounded,
+                ),
+                if (dialogError != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _coralRed.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      dialogError!,
+                      style: const TextStyle(
+                        color: _coralRed,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Text(
                   'School standard',
@@ -352,29 +394,79 @@ class _UserProfileState extends State<UserProfile> {
                   borderRadius: BorderRadius.circular(20),
                 ),
               ),
-              onPressed: () async {
-                try {
-                  await _supabaseService.saveStudentProfile(
-                    username: usernameCtrl.text.trim(),
-                    age: selectedStandard + 6,
-                    standard: selectedStandard,
-                    studyTime: selectedStudyTime,
-                    grade: selectedGrade,
-                    rate: selectedRate,
-                  );
-                  setState(() {
-                    _username = usernameCtrl.text.trim();
-                    _standard = selectedStandard;
-                    _studyTime = selectedStudyTime;
-                  });
-                  if (ctx.mounted) {
-                    Navigator.pop(ctx);
-                    _showSnack('Profile updated!', success: true);
-                  }
-                } catch (e) {
-                  _showSnack('Failed to save. Try again.');
-                }
-              },
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final newEmail = emailCtrl.text.trim();
+                      if (newEmail.isEmpty ||
+                          !RegExp(
+                            r'^[\w\.-]+@[\w\.-]+\.\w{2,}$',
+                          ).hasMatch(newEmail)) {
+                        setDialog(
+                          () => dialogError = 'Enter a valid email address',
+                        );
+                        return;
+                      }
+
+                      setDialog(() {
+                        isSaving = true;
+                        dialogError = null;
+                      });
+
+                      final emailChanged = newEmail != _email;
+                      if (emailChanged) {
+                        try {
+                          await _supabaseService.updateEmail(newEmail);
+                        } on AuthException catch (e) {
+                          setDialog(() {
+                            isSaving = false;
+                            dialogError = e.statusCode == '422' ||
+                                    e.message.toLowerCase().contains(
+                                      'already',
+                                    )
+                                ? 'That email is already in use.'
+                                : e.message;
+                          });
+                          return;
+                        } catch (_) {
+                          setDialog(() {
+                            isSaving = false;
+                            dialogError = 'Could not update email. Try again.';
+                          });
+                          return;
+                        }
+                      }
+
+                      try {
+                        await _supabaseService.saveStudentProfile(
+                          username: usernameCtrl.text.trim(),
+                          age: selectedStandard + 6,
+                          standard: selectedStandard,
+                          studyTime: selectedStudyTime,
+                          grade: selectedGrade,
+                          rate: selectedRate,
+                        );
+                        setState(() {
+                          _username = usernameCtrl.text.trim();
+                          _standard = selectedStandard;
+                          _studyTime = selectedStudyTime;
+                        });
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          _showSnack(
+                            emailChanged
+                                ? 'Profile updated! Check both your old and new email inbox to confirm the email change.'
+                                : 'Profile updated!',
+                            success: true,
+                          );
+                        }
+                      } catch (e) {
+                        setDialog(() {
+                          isSaving = false;
+                          dialogError = 'Failed to save. Try again.';
+                        });
+                      }
+                    },
               child: const Text(
                 'Save',
                 style: TextStyle(
@@ -455,6 +547,131 @@ class _UserProfileState extends State<UserProfile> {
                 style: TextStyle(fontWeight: FontWeight.w800)),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _showReminderDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    bool enabled = prefs.getBool('reminder_enabled') ?? true;
+    int hour = prefs.getInt('reminder_hour') ?? 17;
+    int minute = prefs.getInt('reminder_minute') ?? 0;
+
+    String formatTime(int h, int m) {
+      final period = h >= 12 ? 'PM' : 'AM';
+      final h12 = h % 12 == 0 ? 12 : h % 12;
+      return '$h12:${m.toString().padLeft(2, '0')} $period';
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          title: const Text(
+            'Study Reminder',
+            style: TextStyle(fontWeight: FontWeight.w900, color: _navyText),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Daily reminder',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: _navyText,
+                      ),
+                    ),
+                  ),
+                  Switch(
+                    value: enabled,
+                    activeColor: _buttonBlue,
+                    onChanged: (v) async {
+                      setDialog(() => enabled = v);
+                      await prefs.setBool('reminder_enabled', v);
+                      if (v) {
+                        await NotificationService().scheduleDailyReminder(
+                          hour: hour,
+                          minute: minute,
+                        );
+                      } else {
+                        await NotificationService().cancelDailyReminder();
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: !enabled
+                    ? null
+                    : () async {
+                        final picked = await showTimePicker(
+                          context: ctx,
+                          initialTime: TimeOfDay(hour: hour, minute: minute),
+                        );
+                        if (picked == null) return;
+                        setDialog(() {
+                          hour = picked.hour;
+                          minute = picked.minute;
+                        });
+                        await prefs.setInt('reminder_hour', hour);
+                        await prefs.setInt('reminder_minute', minute);
+                        await NotificationService().scheduleDailyReminder(
+                          hour: hour,
+                          minute: minute,
+                        );
+                      },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: enabled ? _bg : Colors.grey.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: _skyLight, width: 2),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.access_time_rounded,
+                        color: enabled
+                            ? _buttonBlue
+                            : _navyText.withValues(alpha: 0.3),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        formatTime(hour, minute),
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: enabled
+                              ? _navyText
+                              : _navyText.withValues(alpha: 0.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Done',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -632,6 +849,17 @@ class _UserProfileState extends State<UserProfile> {
                         color: _navyText,
                       ),
                     ),
+                    if (_email.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _email,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: _navyText.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 24),
 
                     // ── Menu items ────────────────────────────────────────
@@ -657,6 +885,14 @@ class _UserProfileState extends State<UserProfile> {
                       subtitle: 'Adjust the font size for better readability',
                       iconColor: _buttonBlue,
                       onTap: _showFontSizeDialog,
+                    ),
+                    const SizedBox(height: 16),
+                    _menuCard(
+                      icon: Icons.notifications_active_rounded,
+                      title: 'Study Reminder',
+                      subtitle: 'Get a daily nudge to finish your task',
+                      iconColor: _mintGreen,
+                      onTap: _showReminderDialog,
                     ),
                     const SizedBox(height: 16),
                     _menuCard(

@@ -32,6 +32,19 @@ class SupabaseService {
 
   bool get isLoggedIn => supabase.auth.currentUser != null;
 
+  Future<void> requestPasswordReset(String email) =>
+      supabase.auth.resetPasswordForEmail(email);
+
+  Future<AuthResponse> verifyRecoveryOtp(String email, String token) =>
+      supabase.auth.verifyOTP(
+        type: OtpType.recovery,
+        email: email,
+        token: token,
+      );
+
+  Future<void> updateEmail(String newEmail) =>
+      supabase.auth.updateUser(UserAttributes(email: newEmail));
+
   // ── STUDENT PROFILE ───────────────────────────────────────────────────────
 
   Future<void> saveStudentProfile({

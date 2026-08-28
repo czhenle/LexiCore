@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/supabase_service.dart';
+import 'forgot_password_screen.dart';
 import 'registration_screen.dart';
 import '../home/home_screen.dart';
 import '../user_profiling/onboarding_profile_screen.dart';
@@ -342,6 +343,23 @@ class _AuthScreenState extends State<AuthScreen>
                     color: _navyText,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ForgotPasswordScreen(),
+                    ),
+                  ),
+                  child: Text(
+                    'Forgot password?',
+                    style: TextStyle(
+                      color: _buttonBlue,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ],

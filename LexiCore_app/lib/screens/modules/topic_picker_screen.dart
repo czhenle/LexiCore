@@ -61,6 +61,17 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
   String? _selectedTopicCode;
   String? _selectedArea;
 
+  // Which topic-group cards are expanded (accordion — several can be open
+  // at once so the student can compare groups before choosing).
+  final Set<String> _expandedGroups = {};
+
+  static const List<IconData> _groupIcons = [
+    Icons.category_rounded,
+    Icons.auto_awesome_rounded,
+    Icons.style_rounded,
+    Icons.extension_rounded,
+  ];
+
   bool get _canStart => _selectedTopicCode != null || _selectedArea != null;
   int get _questionCount =>
       _selectedArea != null ? kWholeAreaQuestions : kSingleTopicQuestions;
@@ -162,6 +173,7 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
           resultModuleName: widget.appTitle,
           resultColor: widget.accentColor,
           resultIcon: widget.heroIcon,
+          moduleStyle: true,
         ),
       ),
     );
@@ -250,105 +262,211 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
                             ),
                             const SizedBox(height: 24),
 
-                            // Topics grouped by area, ordered by sort_order.
-                            ..._groups.map((entry) {
-                              final groupName = entry.key;
-                              final groupTopics = entry.value;
+                            // Topics grouped by area, ordered by sort_order —
+                            // one collapsible card per group (mirrors
+                            // VocabularyModuleScreen's mode-card list).
+                            ..._groups.asMap().entries.map((indexed) {
+                              final groupIndex = indexed.key;
+                              final groupName = indexed.value.key;
+                              final groupTopics = indexed.value.value;
                               final isAreaSelected = _selectedArea == groupName;
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 20),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(groupName,
-                                              style: const TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w800,
-                                                  color: _textDark)),
-                                        ),
-                                        if (groupTopics.length > 1)
-                                          GestureDetector(
-                                            onTap: () => _toggleArea(groupName, groupTopics),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                  horizontal: 12, vertical: 6),
-                                              decoration: BoxDecoration(
-                                                color: isAreaSelected
-                                                    ? color
-                                                    : color.withValues(alpha: 0.1),
-                                                borderRadius: BorderRadius.circular(20),
-                                              ),
-                                              child: Text(
-                                                isAreaSelected
-                                                    ? 'Whole area selected ✓'
-                                                    : 'Practise whole area',
-                                                style: TextStyle(
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w800,
-                                                    color: isAreaSelected
-                                                        ? Colors.white
-                                                        : color),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
+                              final isExpanded = _expandedGroups.contains(groupName);
+                              final icon = _groupIcons[groupIndex % _groupIcons.length];
+                              final preview =
+                                  groupTopics.map((t) => t['name'] as String).join(', ');
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 14),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.05),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 4),
                                     ),
-                                    const SizedBox(height: 10),
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      children: groupTopics.map((topic) {
-                                        final code = topic['code'] as String;
-                                        final name = topic['name'] as String;
-                                        final standardMin =
-                                            (topic['standard_min'] as int?) ?? 1;
-                                        final isSelected = _selectedTopicCode == code;
-                                        final isChallenge = _standard < standardMin;
-                                        final dimmed = isAreaSelected;
-                                        return GestureDetector(
-                                          onTap: dimmed ? null : () => _toggleTopic(topic),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 14, vertical: 10),
-                                            decoration: BoxDecoration(
-                                              color: isSelected
-                                                  ? color.withValues(alpha: 0.15)
-                                                  : Colors.white,
-                                              borderRadius: BorderRadius.circular(12),
-                                              border: Border.all(
-                                                color: isSelected
-                                                    ? color
-                                                    : const Color(0xFFE5E7EB),
-                                                width: isSelected ? 1.5 : 1,
+                                  ],
+                                ),
+                                child: Column(
+                                  children: [
+                                    GestureDetector(
+                                      onTap: () => setState(() {
+                                        if (isExpanded) {
+                                          _expandedGroups.remove(groupName);
+                                        } else {
+                                          _expandedGroups.add(groupName);
+                                        }
+                                      }),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(18),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 56,
+                                              height: 56,
+                                              decoration: BoxDecoration(
+                                                color: color.withValues(alpha: 0.12),
+                                                borderRadius: BorderRadius.circular(16),
+                                              ),
+                                              child: Icon(icon, color: color, size: 28),
+                                            ),
+                                            const SizedBox(width: 14),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    children: [
+                                                      Text(groupName,
+                                                          style: const TextStyle(
+                                                              fontSize: 15,
+                                                              fontWeight: FontWeight.w800,
+                                                              color: _textDark)),
+                                                      const SizedBox(width: 8),
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(
+                                                            horizontal: 8, vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                          color: color.withValues(alpha: 0.12),
+                                                          borderRadius: BorderRadius.circular(6),
+                                                        ),
+                                                        child: Text(
+                                                          '${groupTopics.length} topic${groupTopics.length > 1 ? 's' : ''}',
+                                                          style: TextStyle(
+                                                              fontSize: 10,
+                                                              fontWeight: FontWeight.w700,
+                                                              color: color),
+                                                        ),
+                                                      ),
+                                                      if (isAreaSelected) ...[
+                                                        const SizedBox(width: 8),
+                                                        Icon(Icons.check_circle_rounded,
+                                                            color: color, size: 15),
+                                                      ],
+                                                    ],
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(preview,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          fontSize: 12,
+                                                          color: _textMid,
+                                                          height: 1.4)),
+                                                ],
                                               ),
                                             ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(name,
-                                                    style: TextStyle(
-                                                        fontSize: 13,
-                                                        color: dimmed
-                                                            ? _textMid.withValues(alpha: 0.5)
-                                                            : isSelected
-                                                                ? color
-                                                                : _textDark,
-                                                        fontWeight: isSelected
-                                                            ? FontWeight.w700
-                                                            : FontWeight.w500)),
-                                                if (isChallenge) ...[
-                                                  const SizedBox(width: 6),
-                                                  const Icon(Icons.star_rounded,
-                                                      color: Color(0xFFFFA726), size: 15),
-                                                ],
-                                              ],
+                                            AnimatedRotation(
+                                              turns: isExpanded ? 0.5 : 0,
+                                              duration: const Duration(milliseconds: 200),
+                                              child: Icon(Icons.keyboard_arrow_down_rounded,
+                                                  color: Colors.grey[400]),
                                             ),
-                                          ),
-                                        );
-                                      }).toList(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    AnimatedCrossFade(
+                                      duration: const Duration(milliseconds: 200),
+                                      crossFadeState: isExpanded
+                                          ? CrossFadeState.showFirst
+                                          : CrossFadeState.showSecond,
+                                      firstChild: Padding(
+                                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            const Divider(height: 1),
+                                            const SizedBox(height: 14),
+                                            if (groupTopics.length > 1) ...[
+                                              GestureDetector(
+                                                onTap: () => _toggleArea(groupName, groupTopics),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                      horizontal: 12, vertical: 6),
+                                                  decoration: BoxDecoration(
+                                                    color: isAreaSelected
+                                                        ? color
+                                                        : color.withValues(alpha: 0.1),
+                                                    borderRadius: BorderRadius.circular(20),
+                                                  ),
+                                                  child: Text(
+                                                    isAreaSelected
+                                                        ? 'Whole area selected ✓'
+                                                        : 'Practise whole area',
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w800,
+                                                        color: isAreaSelected
+                                                            ? Colors.white
+                                                            : color),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                            ],
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: groupTopics.map((topic) {
+                                                final code = topic['code'] as String;
+                                                final name = topic['name'] as String;
+                                                final standardMin =
+                                                    (topic['standard_min'] as int?) ?? 1;
+                                                final isSelected =
+                                                    _selectedTopicCode == code;
+                                                final isChallenge = _standard < standardMin;
+                                                final dimmed = isAreaSelected;
+                                                return GestureDetector(
+                                                  onTap: dimmed
+                                                      ? null
+                                                      : () => _toggleTopic(topic),
+                                                  child: Container(
+                                                    padding: const EdgeInsets.symmetric(
+                                                        horizontal: 14, vertical: 10),
+                                                    decoration: BoxDecoration(
+                                                      color: isSelected
+                                                          ? color.withValues(alpha: 0.15)
+                                                          : _bg,
+                                                      borderRadius: BorderRadius.circular(12),
+                                                      border: Border.all(
+                                                        color: isSelected
+                                                            ? color
+                                                            : const Color(0xFFE5E7EB),
+                                                        width: isSelected ? 1.5 : 1,
+                                                      ),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Text(name,
+                                                            style: TextStyle(
+                                                                fontSize: 13,
+                                                                color: dimmed
+                                                                    ? _textMid.withValues(alpha: 0.5)
+                                                                    : isSelected
+                                                                        ? color
+                                                                        : _textDark,
+                                                                fontWeight: isSelected
+                                                                    ? FontWeight.w700
+                                                                    : FontWeight.w500)),
+                                                        if (isChallenge) ...[
+                                                          const SizedBox(width: 6),
+                                                          const Icon(Icons.star_rounded,
+                                                              color: Color(0xFFFFA726),
+                                                              size: 15),
+                                                        ],
+                                                      ],
+                                                    ),
+                                                  ),
+                                                );
+                                              }).toList(),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      secondChild: const SizedBox(width: double.infinity),
                                     ),
                                   ],
                                 ),

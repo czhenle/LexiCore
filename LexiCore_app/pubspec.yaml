@@ -43,6 +43,9 @@ dependencies:
   # support yet, and breaks compilation of every package that touches
   # http.Response (gotrue/postgrest/storage/realtime/functions clients).
   http: '>=1.2.0 <1.6.0'
+  flutter_local_notifications: ^20.1.0
+  timezone: ^0.10.1
+  flutter_timezone: ^5.1.0
 
 dev_dependencies:
   flutter_test:

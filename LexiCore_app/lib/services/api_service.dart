@@ -14,12 +14,12 @@ import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 class ApiService {
   static const String supabaseUrl =
       'https://cldngeqtuyxwuvtsaocm.supabase.co/functions/v1';
-  static const String publishable_key =
+  static const String publishableKey =
       'sb_publishable_NJvrBZXKXKoeGp4e-GzI3A_yIkohgjh';
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer $publishable_key',
+        'Authorization': 'Bearer $publishableKey',
       };
 
   // ── VOCABULARY MODULE ────────────────────────────────────────────────────

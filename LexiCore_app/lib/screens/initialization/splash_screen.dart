@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
 import '../login_and_registration/login_screen.dart';
 import '../user_profiling/onboarding_profile_screen.dart';
@@ -50,6 +51,9 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(milliseconds: 1800)); // brand moment
     if (!mounted) return;
 
+    await NotificationService().init();
+    await _applyReminderPreference();
+
     final session = Supabase.instance.client.auth.currentSession;
 
     // Not logged in -> login screen.
@@ -79,6 +83,25 @@ class _SplashScreenState extends State<SplashScreen>
   void _replace(Widget page) => Navigator.of(
     context,
   ).pushReplacement(MaterialPageRoute(builder: (_) => page));
+
+  // Applies the saved reminder preference on every cold start (defaults to
+  // ON at 17:00 the first time, since the preference key is absent). The
+  // profile screen's "Study Reminder" dialog re-applies immediately on
+  // change, so this only matters for the boot-time re-schedule.
+  Future<void> _applyReminderPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool('reminder_enabled') ?? true;
+    if (!enabled) {
+      await NotificationService().cancelDailyReminder();
+      return;
+    }
+    final hour = prefs.getInt('reminder_hour') ?? 17;
+    final minute = prefs.getInt('reminder_minute') ?? 0;
+    await NotificationService().scheduleDailyReminder(
+      hour: hour,
+      minute: minute,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
