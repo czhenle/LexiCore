@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/supabase_service.dart';
 import '../user_profiling/onboarding_profile_screen.dart';
+import '../../theme/app_colors.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -13,13 +14,13 @@ class RegistrationScreen extends StatefulWidget {
 class _RegistrationScreenState extends State<RegistrationScreen>
     with SingleTickerProviderStateMixin {
   // ✨ Sky Blue Theme
-  static const Color _skyBlueLight = Color(0xFFDFF1FF);
-  static const Color _skyBlueDark = Color(0xFF7AC9FA);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _starYellow = Color(0xFFFFD54F);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _divider = Color(0xFFE5E7EB);
-  static const Color _errorRed = Color(0xFFEF4444);
+  static const Color _skyBlueLight = AppColors.skyLight;
+  static const Color _skyBlueDark = AppColors.skyDark;
+  static const Color _navyText = AppColors.navy;
+  static const Color _starYellow = AppColors.starYellow;
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _divider = AppColors.divider;
+  static const Color _errorRed = AppColors.errorRed;
 
   final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();

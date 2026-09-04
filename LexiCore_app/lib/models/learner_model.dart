@@ -47,6 +47,25 @@ class EloConfig {
       standardBase[standard.clamp(1, 6)]! + (scorePercent - 50) * 4.0;
 }
 
+/// Rung -> format per skill. Fallback only — the live source of truth is the
+/// `rung_formats` table (MasteryService.rungFormats()); this just keeps
+/// rung-derived (non-pinned-format) queues working if that table is ever
+/// empty/unreachable. Shared between AdaptivePracticeScreen (one item at a
+/// time) and MasteryService.batchGenerateQueue (a whole session upfront) so
+/// there's one place to update, not two that can drift apart.
+const Map<String, List<String>> rungFormatFallback = {
+  'Vocabulary': ['meaning_match', 'mcq_word_meaning', 'cloze_sentence_wordbank', 'cloze_paragraph_open', 'open_sentence'],
+  'Grammar':    ['worked_example', 'mcq_identify_or_error', 'gap_fill', 'transform_or_reorder', 'open_sentence'],
+  // Reading dropped its 5-format ladder — the module screen pins
+  // mcq_literal (direct) / mcq_inference (KBAT) per-slice by standard
+  // instead, not by rung. This fallback only matters if 'reading.
+  // comprehension' is ever served without a pinned format — kept
+  // consistent with the module either way: direct until the top rung,
+  // KBAT at rung 5.
+  'Reading':    ['mcq_literal', 'mcq_literal', 'mcq_literal', 'mcq_literal', 'mcq_inference'],
+  'Writing':    ['error_correction_rewrite', 'sentence_complete', 'sentence_combine', 'guided_composition', 'free_composition'],
+};
+
 class MasteryState {
   final String subSkillCode;
   final int standard;
@@ -200,7 +219,48 @@ class Checkpoint {
 class PracticeQueueItem {
   final String subSkillCode;
   final int count;
-  const PracticeQueueItem(this.subSkillCode, this.count);
+
+  /// Overrides the rung-derived format for every item in this slice. Every
+  /// other skill picks its format from `rung_formats`/the rung ladder, but
+  /// Vocabulary's mode-cards (Guess the Image, Word Meaning, ...) fix the
+  /// format to whichever mode the student tapped — rung still scales
+  /// difficulty within that mode, it just never changes the format.
+  final String? format;
+  const PracticeQueueItem(this.subSkillCode, this.count, {this.format});
+}
+
+/// What MasteryService.buildWeeklyAssessmentPlan() decided this week's
+/// check-in should contain — see WeeklyAssessmentScreen for how it's run.
+/// Kept as 3 separate parts (not one combined queue) because each needs its
+/// own screen/step: Reading's questions need the passage shown first, on
+/// its own screen, the same way the real Reading module shows it — not
+/// folded into a generic quiz with the passage hidden behind a re-read
+/// button; Writing needs its own submit/timer UI entirely.
+class WeeklyAssessmentPlan {
+  /// Vocabulary/Grammar questions, batch-generated together into one quiz
+  /// screen.
+  final List<PracticeQueueItem> vocabGrammarQueue;
+
+  /// Reading's questions — generated (and shown) only AFTER the student has
+  /// read the passage on its own screen, same flow as the real Reading
+  /// module.
+  final List<PracticeQueueItem> readingQueue;
+
+  /// 'guided' | 'free' | null — null means no composition task this week
+  /// (no Writing history yet to target). When set, the caller launches
+  /// EssayWritingScreen(mode: writingMode) as its own screen right after
+  /// the quiz — a full composition needs its own submit/timer UI, not a
+  /// slot in the quiz list.
+  final String? writingMode;
+
+  const WeeklyAssessmentPlan({
+    required this.vocabGrammarQueue,
+    required this.readingQueue,
+    required this.writingMode,
+  });
+
+  bool get isEmpty =>
+      vocabGrammarQueue.isEmpty && readingQueue.isEmpty && writingMode == null;
 }
 
 /// Splits `total` questions as evenly as possible across `codes`, in a fixed

@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import '../../models/learner_model.dart';
 import '../../services/mastery_service.dart';
 import '../../widgets/challenge_alert_dialog.dart';
+import '../../theme/app_colors.dart';
 import 'adaptive_practice_screen.dart';
 
-const Color _textDark = Color(0xFF1A1A2E);
-const Color _textMid  = Color(0xFF6B7280);
-const Color _bg       = Color(0xFFF5F5F7);
+const Color _textDark = AppColors.textDark;
+const Color _textMid  = AppColors.textMid;
+const Color _bg       = AppColors.moduleBg;
 
 const int kSingleTopicQuestions = 10;
 const int kWholeAreaQuestions   = 15;
@@ -75,6 +76,12 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
   bool get _canStart => _selectedTopicCode != null || _selectedArea != null;
   int get _questionCount =>
       _selectedArea != null ? kWholeAreaQuestions : kSingleTopicQuestions;
+
+  // Whether to a spinner while the whole session batch-generates upfront
+  // (see MasteryService.batchGenerateQueue) — the session's shape is fully
+  // known before the student starts, so it's generated in 1-2 calls
+  // instead of one per question.
+  bool _starting = false;
 
   @override
   void initState() {
@@ -153,7 +160,7 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
     }
   }
 
-  void _start() {
+  Future<void> _start() async {
     final List<PracticeQueueItem> queue;
     if (_selectedTopicCode != null) {
       queue = [PracticeQueueItem(_selectedTopicCode!, kSingleTopicQuestions)];
@@ -165,11 +172,28 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
           .toList();
       queue = distributeQuestions(groupTopics, kWholeAreaQuestions);
     }
+
+    setState(() => _starting = true);
+    List<Map<String, dynamic>> items;
+    try {
+      items = await _svc.batchGenerateQueue(queue);
+    } catch (e) {
+      debugPrint('Batch generate failed: $e');
+      if (!mounted) return;
+      setState(() => _starting = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Couldn't prepare your questions. Please try again.")));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _starting = false);
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => AdaptivePracticeScreen(
           fixedQueue: queue,
+          preloadedItems: items,
           resultModuleName: widget.appTitle,
           resultColor: widget.accentColor,
           resultIcon: widget.heroIcon,
@@ -318,11 +342,15 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
                                                 children: [
                                                   Row(
                                                     children: [
-                                                      Text(groupName,
-                                                          style: const TextStyle(
-                                                              fontSize: 15,
-                                                              fontWeight: FontWeight.w800,
-                                                              color: _textDark)),
+                                                      Flexible(
+                                                        child: Text(groupName,
+                                                            maxLines: 1,
+                                                            overflow: TextOverflow.ellipsis,
+                                                            style: const TextStyle(
+                                                                fontSize: 15,
+                                                                fontWeight: FontWeight.w800,
+                                                                color: _textDark)),
+                                                      ),
                                                       const SizedBox(width: 8),
                                                       Container(
                                                         padding: const EdgeInsets.symmetric(
@@ -433,7 +461,7 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
                                                       border: Border.all(
                                                         color: isSelected
                                                             ? color
-                                                            : const Color(0xFFE5E7EB),
+                                                            : AppColors.divider,
                                                         width: isSelected ? 1.5 : 1,
                                                       ),
                                                     ),
@@ -481,27 +509,45 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
                     Container(
                       padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
                       color: _bg,
-                      child: SizedBox(
-                        width: double.infinity, height: 54,
-                        child: ElevatedButton(
-                          onPressed: _canStart ? _start : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:         color,
-                            disabledBackgroundColor: Colors.grey[300],
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_starting)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                  'Preparing your questions — usually ready in about 15-30s',
+                                  style: TextStyle(fontSize: 12, color: _textMid)),
+                            ),
+                          SizedBox(
+                            width: double.infinity, height: 54,
+                            child: ElevatedButton(
+                              onPressed: (_canStart && !_starting) ? _start : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor:         color,
+                                disabledBackgroundColor: Colors.grey[300],
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16)),
+                              ),
+                              child: _starting
+                                  ? const SizedBox(
+                                      width: 22, height: 22,
+                                      child: CircularProgressIndicator(
+                                          color: Colors.white, strokeWidth: 3),
+                                    )
+                                  : Text(
+                                      _canStart
+                                          ? 'Start practice ($_questionCount questions)'
+                                          : 'Select a topic or a whole area',
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w800,
+                                          color: Colors.white),
+                                    ),
+                            ),
                           ),
-                          child: Text(
-                            _canStart
-                                ? 'Start practice ($_questionCount questions)'
-                                : 'Select a topic or a whole area',
-                            style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
-                          ),
-                        ),
+                        ],
                       ),
                     ),
                   ],

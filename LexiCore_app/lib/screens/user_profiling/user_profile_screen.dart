@@ -7,6 +7,7 @@ import '../../main.dart';
 import '../../services/notification_service.dart';
 import '../../services/supabase_service.dart';
 import '../login_and_registration/login_screen.dart';
+import '../../theme/app_colors.dart';
 
 class UserProfile extends StatefulWidget {
   const UserProfile({super.key});
@@ -17,12 +18,12 @@ class UserProfile extends StatefulWidget {
 
 class _UserProfileState extends State<UserProfile> {
   // ✨ Candy & Sunshine Sky Blue Theme
-  static const Color _bg = Color(0xFFF0F8FF);
-  static const Color _navyText = Color.fromRGBO(0, 60, 143, 1);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _skyLight = Color(0xFFDFF1FF);
-  static const Color _mintGreen = Color(0xFF4DB6AC);
-  static const Color _coralRed = Color(0xFFFF5252);
+  static const Color _bg = AppColors.skyBg;
+  static const Color _navyText = AppColors.navy;
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _skyLight = AppColors.skyLight;
+  static const Color _mintGreen = AppColors.mintGreen;
+  static const Color _coralRed = AppColors.coralRedBright;
 
   final _supabaseService = SupabaseService();
   final _picker = ImagePicker();
@@ -45,6 +46,7 @@ class _UserProfileState extends State<UserProfile> {
   Future<void> _loadProfile() async {
     try {
       final profile = await _supabaseService.getStudentProfile();
+      final prefs = await SharedPreferences.getInstance();
 
       setState(() {
         _username = (profile?['username'] as String?) ?? 'Student';
@@ -53,6 +55,14 @@ class _UserProfileState extends State<UserProfile> {
         _studyTime = (profile?['study_time'] as String?) ?? '';
         _grade = (profile?['grade'] as String?) ?? 'A';
         _rate = (profile?['rate'] as String?) ?? '3';
+        // Locally-persisted, per-device only — there's no photo upload
+        // pipeline (no storage bucket) behind this yet, so a picked avatar
+        // used to just vanish the next time the app opened even though
+        // picking it looked like it worked. Saving the path at least makes
+        // it survive restarts on this same device/install.
+        final savedPath = prefs.getString('profile_avatar_path');
+        _imagePath =
+            savedPath != null && File(savedPath).existsSync() ? savedPath : null;
         _isLoading = false;
       });
     } catch (e) {
@@ -65,7 +75,27 @@ class _UserProfileState extends State<UserProfile> {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
       setState(() => _imagePath = image.path);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('profile_avatar_path', image.path);
     }
+  }
+
+  // Translates common Supabase Auth failures into messages a student would
+  // actually understand, instead of showing the raw exception text (which
+  // is written to the debug console either way, so nothing is lost for
+  // troubleshooting — see the debugPrint at each call site).
+  String _friendlyAuthError(AuthException e) {
+    final msg = e.message.toLowerCase();
+    if (e.statusCode == '422' || msg.contains('already') || msg.contains('registered')) {
+      return 'That email is already in use.';
+    }
+    if (msg.contains('security purposes') || msg.contains('rate limit')) {
+      return "You're trying too often — please wait a minute and try again.";
+    }
+    if (msg.contains('session') || msg.contains('token')) {
+      return 'Your session expired — please log out and back in, then try again.';
+    }
+    return e.message;
   }
 
   // ── Change password dialog ───────────────────────────────────────────────
@@ -169,7 +199,11 @@ class _UserProfileState extends State<UserProfile> {
                     _showSnack('Password updated successfully!', success: true);
                   }
                 } on AuthException catch (e) {
-                  setDialog(() => error = e.message);
+                  debugPrint('Password update failed: ${e.statusCode} ${e.message}');
+                  setDialog(() => error = _friendlyAuthError(e));
+                } catch (e) {
+                  debugPrint('Password update failed: $e');
+                  setDialog(() => error = 'Could not update your password. Please try again.');
                 }
               },
               child: const Text(
@@ -193,8 +227,8 @@ class _UserProfileState extends State<UserProfile> {
     final emailCtrl = TextEditingController(text: _email);
     int selectedStandard = _standard;
     String selectedStudyTime = _studyTime;
-    String selectedGrade = _grade;
-    String selectedRate = _rate;
+    final selectedGrade = _grade;
+    final selectedRate = _rate;
     String? dialogError;
     bool isSaving = false;
 
@@ -273,40 +307,44 @@ class _UserProfileState extends State<UserProfile> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: List.generate(6, (i) {
-                    final std = i + 1;
-                    final sel = std == selectedStandard;
-                    return GestureDetector(
-                      onTap: () => setDialog(() => selectedStandard = std),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: sel ? _buttonBlue : _bg,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: sel ? _buttonBlue : _skyLight,
-                            width: 2,
+                // 2 rows of 3, instead of a free-flowing Wrap — a fixed
+                // grid rather than however many happen to fit per row.
+                for (var row = 0; row < 2; row++) ...[
+                  if (row > 0) const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(3, (col) {
+                      final std = row * 3 + col + 1;
+                      final sel = std == selectedStandard;
+                      return GestureDetector(
+                        onTap: () => setDialog(() => selectedStandard = std),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 56,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: sel ? _buttonBlue : _bg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: sel ? _buttonBlue : _skyLight,
+                              width: 2,
+                            ),
                           ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            '$std',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                              color: sel ? Colors.white : _navyText,
+                          child: Center(
+                            child: Text(
+                              '$std',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: sel ? Colors.white : _navyText,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }),
-                ),
+                      );
+                    }),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Text(
                   'Daily study time',
@@ -418,17 +456,18 @@ class _UserProfileState extends State<UserProfile> {
                         try {
                           await _supabaseService.updateEmail(newEmail);
                         } on AuthException catch (e) {
+                          // Logged regardless of which friendly message is
+                          // shown — this used to be swallowed with zero
+                          // logging anywhere, so a real failure was
+                          // undiagnosable even for us.
+                          debugPrint('Email update failed: ${e.statusCode} ${e.message}');
                           setDialog(() {
                             isSaving = false;
-                            dialogError = e.statusCode == '422' ||
-                                    e.message.toLowerCase().contains(
-                                      'already',
-                                    )
-                                ? 'That email is already in use.'
-                                : e.message;
+                            dialogError = _friendlyAuthError(e);
                           });
                           return;
-                        } catch (_) {
+                        } catch (e) {
+                          debugPrint('Email update failed: $e');
                           setDialog(() {
                             isSaving = false;
                             dialogError = 'Could not update email. Try again.';
@@ -450,6 +489,13 @@ class _UserProfileState extends State<UserProfile> {
                           _username = usernameCtrl.text.trim();
                           _standard = selectedStandard;
                           _studyTime = selectedStudyTime;
+                          // Fixes a real bug: this used to never update, so
+                          // the NEXT time Edit Profile was opened, the email
+                          // field still pre-filled with the stale old
+                          // address, and saving again (even with nothing
+                          // touched) treated it as another email change and
+                          // re-called updateEmail.
+                          if (emailChanged) _email = newEmail;
                         });
                         if (ctx.mounted) {
                           Navigator.pop(ctx);
@@ -461,6 +507,11 @@ class _UserProfileState extends State<UserProfile> {
                           );
                         }
                       } catch (e) {
+                        // Also used to be swallowed silently — logged now so
+                        // a genuine save failure (RLS, a bad column value,
+                        // ...) is actually diagnosable instead of just "some
+                        // error".
+                        debugPrint('Profile save failed: $e');
                         setDialog(() {
                           isSaving = false;
                           dialogError = 'Failed to save. Try again.';
@@ -519,7 +570,7 @@ class _UserProfileState extends State<UserProfile> {
                   decoration: BoxDecoration(
                     color: sel
                         ? _buttonBlue.withValues(alpha: 0.12)
-                        : const Color(0xFFF0F8FF),
+                        : _bg,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
                         color: sel ? _buttonBlue : Colors.transparent,
@@ -860,6 +911,14 @@ class _UserProfileState extends State<UserProfile> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 20),
+
+                    // ── At-a-glance stats ─────────────────────────────────
+                    // The screen used to only show these values buried
+                    // inside the Edit Profile dialog — a profile page should
+                    // show a student's own info directly, not hide it
+                    // behind an edit form.
+                    _statsRow(),
                     const SizedBox(height: 24),
 
                     // ── Menu items ────────────────────────────────────────
@@ -906,6 +965,54 @@ class _UserProfileState extends State<UserProfile> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _statsRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: _navyText.withValues(alpha: 0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _statItem(Icons.school_rounded, 'Standard', 'Std $_standard', _buttonBlue),
+          _statDivider(),
+          _statItem(Icons.timer_rounded, 'Study Time', _studyTime.isEmpty ? '—' : _studyTime, _mintGreen),
+          _statDivider(),
+          _statItem(Icons.grade_rounded, 'Grade', _grade, const Color(0xFFFFA726)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statDivider() => Container(width: 1, height: 40, color: _skyLight);
+
+  Widget _statItem(IconData icon, String label, String value, Color color) {
+    return Expanded(
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 6),
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w900, color: _navyText)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: _navyText.withValues(alpha: 0.5))),
+        ],
+      ),
     );
   }
 

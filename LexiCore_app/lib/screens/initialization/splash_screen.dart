@@ -6,6 +6,7 @@ import '../../services/supabase_service.dart';
 import '../login_and_registration/login_screen.dart';
 import '../user_profiling/onboarding_profile_screen.dart';
 import '../home/home_screen.dart';
+import '../../theme/app_colors.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -16,10 +17,10 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  static const Color _skyBlueLight = Color(0xFFDFF1FF);
-  static const Color _skyBlueDark = Color(0xFF7AC9FA);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _starYellow = Color(0xFFFFD54F);
+  static const Color _skyBlueLight = AppColors.skyLight;
+  static const Color _skyBlueDark = AppColors.skyDark;
+  static const Color _navyText = AppColors.navy;
+  static const Color _starYellow = AppColors.starYellow;
 
   late final AnimationController _animCtrl;
   late final Animation<double> _fadeAnim;

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/tutor_history_service.dart';
+import '../theme/app_colors.dart';
 
 /// A hint chat with Lexi, grounded in the current practice item (PS3).
 /// Open via `showModalBottomSheet(isScrollControlled: true, ...)`.
@@ -13,18 +15,44 @@ class TutorSheet extends StatefulWidget {
 }
 
 class _TutorSheetState extends State<TutorSheet> {
-  static const _blue = Color(0xFF1E88E5);
-  static const _navy = Color(0xFF003C8F);
+  static const _blue = AppColors.blue;
+  static const _navy = AppColors.navy;
 
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
   final List<Map<String, String>> _messages = []; // {role, content}
   bool _loading = false;
+  bool _historyLoaded = false;
+
+  final _history = TutorHistoryService();
+  late final String _itemKey = _history.itemKey(widget.item);
+
+  /// How many times the child has asked this question already — including
+  /// whatever's carried over from a previous open of this same sheet on the
+  /// same item. Drives the tutor's leniency rule server-side.
+  int get _hintCount => _messages.where((m) => m['role'] == 'user').length;
 
   @override
   void initState() {
     super.initState();
-    _send("I'm stuck. Can you give me a hint?", initial: true);
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    final rows = await _history.loadForItem(_itemKey);
+    if (rows.isNotEmpty) {
+      setState(() {
+        _messages.addAll(rows.map((r) => {
+              'role': r['role'] == 'assistant' ? 'assistant' : 'user',
+              'content': (r['text'] as String?) ?? '',
+            }));
+        _historyLoaded = true;
+      });
+      _scrollDown();
+    } else {
+      _historyLoaded = true;
+      _send("I'm stuck. Can you give me a hint?", initial: true);
+    }
   }
 
   @override
@@ -43,6 +71,7 @@ class _TutorSheetState extends State<TutorSheet> {
       if (!initial) _ctrl.clear();
     });
     _scrollDown();
+    _history.append(itemKey: _itemKey, role: 'user', text: msg);
     try {
       final res =
           await Supabase.instance.client.functions.invoke('tutor', body: {
@@ -54,14 +83,36 @@ class _TutorSheetState extends State<TutorSheet> {
         'rung': widget.item['rung'],
         'standard': widget.standard,
         'messages': _messages,
+        // Includes the ask just added above — the server's leniency rule
+        // reads this as "which ask number is this", 1-indexed.
+        'hint_count': _hintCount,
       });
       final data = res.data;
-      final reply = (data is Map && data['reply'] != null)
-          ? data['reply'].toString()
-          : "Let's read the question again slowly. What word do you know?";
+      // tutor now returns the same typed envelope chatbot uses
+      // ({type:'guiding_hint'|'reveal_answer', hint, question, answer}) —
+      // hint/question are mutually exclusive per its own "one nudge at a
+      // time" rule; `answer` is only non-empty once the leniency rule has
+      // kicked in, and takes priority when present. `content` stays a plain
+      // string since it's also replayed verbatim as this sheet's own
+      // outgoing chat history.
+      String reply = "Let's read the question again slowly. What word do you know?";
+      if (data is Map && data['reply'] is Map) {
+        final r = (data['reply'] as Map).cast<String, dynamic>();
+        final hint = (r['hint'] as String?)?.trim() ?? '';
+        final question = (r['question'] as String?)?.trim() ?? '';
+        final answer = (r['answer'] as String?)?.trim() ?? '';
+        if (answer.isNotEmpty) {
+          reply = '🎉 The answer is "$answer".${hint.isNotEmpty ? ' $hint' : ''}';
+        } else if (hint.isNotEmpty) {
+          reply = '💡 $hint';
+        } else if (question.isNotEmpty) {
+          reply = '❓ $question';
+        }
+      }
       if (mounted) {
         setState(() => _messages.add({'role': 'assistant', 'content': reply}));
       }
+      _history.append(itemKey: _itemKey, role: 'assistant', text: reply);
     } catch (e) {
       // Keep the child-facing message gentle, but never swallow the cause —
       // a silent catch here hid the fact that `tutor` was running a stale
@@ -137,7 +188,13 @@ class _TutorSheetState extends State<TutorSheet> {
         ]),
       );
 
-  Widget _messageList() => ListView.builder(
+  Widget _messageList() {
+    if (!_historyLoaded) {
+      return const Center(
+          child: SizedBox(
+              width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)));
+    }
+    return ListView.builder(
         controller: _scroll,
         padding: const EdgeInsets.all(12),
         itemCount: _messages.length + (_loading ? 1 : 0),
@@ -164,6 +221,7 @@ class _TutorSheetState extends State<TutorSheet> {
           );
         },
       );
+  }
 
   Widget _typing() => Align(
         alignment: Alignment.centerLeft,

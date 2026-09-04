@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../services/supabase_service.dart';
+import '../../theme/app_colors.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -12,13 +13,13 @@ class ForgotPasswordScreen extends StatefulWidget {
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     with SingleTickerProviderStateMixin {
   // ✨ Sky Blue Theme (matches registration_screen.dart / login_screen.dart)
-  static const Color _skyBlueLight = Color(0xFFDFF1FF);
-  static const Color _skyBlueDark = Color(0xFF7AC9FA);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _starYellow = Color(0xFFFFD54F);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _errorRed = Color(0xFFEF4444);
-  static const Color _mintGreen = Color(0xFF4DB6AC);
+  static const Color _skyBlueLight = AppColors.skyLight;
+  static const Color _skyBlueDark = AppColors.skyDark;
+  static const Color _navyText = AppColors.navy;
+  static const Color _starYellow = AppColors.starYellow;
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _errorRed = AppColors.errorRed;
+  static const Color _mintGreen = AppColors.mintGreen;
 
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();

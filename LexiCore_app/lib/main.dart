@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/initialization/splash_screen.dart';
+import 'theme/app_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,10 +34,10 @@ class LexiCoreApp extends StatelessWidget {
       title: 'LexiCore',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primaryColor: const Color(0xFF1E88E5),
-        scaffoldBackgroundColor: const Color(0xFFDFF1FF),
+        primaryColor: AppColors.blue,
+        scaffoldBackgroundColor: AppColors.skyLight,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5),
+          seedColor: AppColors.blue,
         ),
       ),
       builder: (context, child) => MediaQuery(

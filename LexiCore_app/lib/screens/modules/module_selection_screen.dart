@@ -3,13 +3,15 @@ import 'vocabulary_module_screen.dart';
 import 'grammar_module_screen.dart';
 import 'reading_module_screen.dart';
 import 'writing_module_screen.dart';
+import 'weekly_assessment_screen.dart';
+import '../../theme/app_colors.dart';
 
 class ModuleSelectionScreen extends StatelessWidget {
   const ModuleSelectionScreen({super.key});
 
   // ✨ Sky Blue Theme Colors
-  static const Color _bg       = Color(0xFFF0F8FF);
-  static const Color _navyText = Color(0xFF003C8F);
+  static const Color _bg       = AppColors.skyBg;
+  static const Color _navyText = AppColors.navy;
 
   @override
   Widget build(BuildContext context) {
@@ -43,8 +45,10 @@ class ModuleSelectionScreen extends StatelessWidget {
                 title:       'Vocabulary',
                 description: 'Guess images, match meanings, and learn new words',
                 icon:        Icons.abc_rounded,
-                color:       const Color(0xFFFF9800),
-                tags:        ['Guess image', 'Word meaning', 'In context'],
+                color:       AppColors.brightOrange,
+                // The module's real 5 mode-cards: Guess the Image, Word
+                // Meaning, Word in Context, Synonyms & Antonyms, Spelling.
+                tags:        ['Guess image', 'Word meaning', 'Spelling', '+ more'],
                 destination: const VocabularyModuleScreen(),
               ),
               _buildModuleCard(
@@ -52,8 +56,10 @@ class ModuleSelectionScreen extends StatelessWidget {
                 title:       'Grammar',
                 description: 'Pick your grammar topics and practise targeted exercises',
                 icon:        Icons.rule_rounded,
-                color:       const Color(0xFF4DB6AC),
-                tags:        ['Nouns', 'Tenses', 'Articles', '+ more'],
+                color:       AppColors.mintGreen,
+                // Real topic_group names from sub_skills (confirmed live) —
+                // there are ~20 groups in total, these 3 are just a sample.
+                tags:        ['Nouns', 'Articles', 'Punctuation', '+ more'],
                 destination: const GrammarModuleScreen(),
               ),
               _buildModuleCard(
@@ -61,23 +67,53 @@ class ModuleSelectionScreen extends StatelessWidget {
                 title:       'Reading',
                 description: 'Read an AI-generated article and answer comprehension questions',
                 icon:        Icons.menu_book_rounded,
-                color:       const Color(0xFF1E88E5),
-                tags:        ['Long articles', 'MCQ', 'Save & submit'],
+                color:       AppColors.blue,
+                // Matches what the module actually does now: ONE passage,
+                // then direct MCQs (+ KBAT/inference ones from Standard 5) —
+                // no "save & submit" step exists.
+                tags:        ['One passage', 'MCQ', 'KBAT thinking'],
                 destination: const ReadingModuleScreen(),
               ),
               _buildModuleCard(
                 context,
                 title:       'Writing',
-                description: 'Guided writing exercises to sharpen your composition skills',
+                description: 'A guided or free composition task — write it on paper or type it in',
                 icon:        Icons.edit_rounded,
-                color:       const Color(0xFFE57373),
-                tags:        ['Sentence completion', 'Error correction', 'Ordering'],
+                color:       AppColors.coralRed,
+                // Writing's ONLY 2 modes now (see writing_module_screen.dart)
+                // — "Sentence completion"/"Error correction"/"Ordering" were
+                // an older design; those formats no longer exist as a
+                // standalone module entry.
+                tags:        ['Guided composition', 'Free composition', 'Photo or typed'],
                 destination: const WritingModuleScreen(),
+              ),
+
+              // Available any day here, not just gated to Home's Saturday
+              // slot — a student (or this project's own demo/presentation)
+              // shouldn't have to wait for a specific day to see it.
+              _buildModuleCard(
+                context,
+                title:       'Weekly Assessment',
+                description: 'A check-in covering all 4 skills, based on what your week actually covered',
+                icon:        Icons.fact_check_rounded,
+                color:       AppColors.purple,
+                tags:        ['Vocabulary', 'Grammar', 'Reading', 'Writing'],
+                onTap:       () => _startWeeklyAssessment(context),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  void _startWeeklyAssessment(BuildContext context) {
+    // WeeklyAssessmentScreen builds its own plan (batch-generated, like the
+    // pre-assessment) and orchestrates the quiz + any Writing task — see
+    // its doc comment, including the empty-plan message.
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const WeeklyAssessmentScreen()),
     );
   }
 
@@ -88,13 +124,17 @@ class ModuleSelectionScreen extends StatelessWidget {
     required IconData     icon,
     required Color        color,
     required List<String> tags,
-    required Widget       destination,
+    Widget?                destination,
+    VoidCallback?          onTap,
   }) {
+    assert(destination != null || onTap != null,
+        'either destination or onTap must be given');
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => destination),
-      ),
+      onTap: onTap ??
+          () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => destination!),
+              ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(20),
@@ -132,7 +172,7 @@ class ModuleSelectionScreen extends StatelessWidget {
                   Text(description,
                       style: const TextStyle(
                           fontSize: 12,
-                          color: Color(0xFF6B7280),
+                          color: AppColors.textMid,
                           height: 1.4)),
                   const SizedBox(height: 10),
                   Wrap(

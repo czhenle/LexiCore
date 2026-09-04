@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
+import '../../services/mastery_service.dart';
+import '../../services/chat_history_service.dart';
+import '../../theme/app_colors.dart';
 
 class AiChatbotScreen extends StatefulWidget {
   const AiChatbotScreen({super.key});
@@ -13,14 +16,15 @@ class AiChatbotScreen extends StatefulWidget {
 }
 
 class _AiChatbotScreenState extends State<AiChatbotScreen> {
-  static const Color _bg = Color(0xFFF0F8FF);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _skyLight = Color(0xFFDFF1FF);
-  static const Color _mintGreen = Color(0xFF4DB6AC);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
+  static const Color _bg = AppColors.skyBg;
+  static const Color _navyText = AppColors.navy;
+  static const Color _skyLight = AppColors.skyLight;
+  static const Color _mintGreen = AppColors.mintGreen;
+  static const Color _buttonBlue = AppColors.blue;
 
   final _supabaseService = SupabaseService();
   final _apiService = ApiService();
+  final _chatHistory = ChatHistoryService();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -31,6 +35,7 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
   bool _isTyping = false;
   String _weakness = 'Grammar';
   String _username = 'there';
+  int _standard = 3;
 
   @override
   void initState() {
@@ -41,19 +46,47 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
   Future<void> _loadStudentContext() async {
     try {
       final profile = await _supabaseService.getStudentProfile();
-      final assessment = await _supabaseService.getAssessmentResults();
+      final summary = await MasteryService().masterySummary();
 
       // Check if the widget is still active before updating local variables
       if (!mounted) return;
 
-      if (profile != null && assessment != null) {
-        setState(() {
-          _username = profile['username'] ?? 'friend';
-          _weakness = 'Vocabulary'; // Simplified for demo
-        });
-      }
+      setState(() {
+        _username = (profile?['username'] as String?) ?? 'friend';
+        _standard = (profile?['standard'] as int?) ?? 3;
+        if (summary != null) _weakness = summary.weakest;
+      });
     } catch (e) {
       debugPrint(e.toString());
+    }
+
+    // Restore last time's conversation, if there is one, instead of always
+    // starting fresh — the welcome message below is only ever shown when
+    // there's nothing to restore (it isn't itself persisted, so it never
+    // clutters a real conversation's history on later restores).
+    final restored = await _chatHistory.loadRecent();
+    if (!mounted) return;
+
+    if (restored.isNotEmpty) {
+      setState(() {
+        for (final row in restored) {
+          final text = row['text'] as String?;
+          if (row['role'] == 'user') {
+            _messages.add({'role': 'user', 'text': text ?? ''});
+            if (text != null && text.trim().isNotEmpty) {
+              _history.add({'role': 'user', 'text': text});
+            }
+          } else {
+            final data = row['data'] is Map
+                ? Map<String, dynamic>.from(row['data'] as Map)
+                : {'type': 'simple_answer', 'text': text ?? ''};
+            _messages.add({'role': 'lexi', 'data': data});
+            _history.add({'role': 'lexi', 'text': _replyToText(data)});
+          }
+        }
+        if (_history.length > 20) _history.removeRange(0, _history.length - 20);
+      });
+      return;
     }
 
     // Final check before adding the initial welcome message
@@ -130,11 +163,15 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     final historyToSend = List<Map<String, String>>.from(_history);
     if (text.isNotEmpty) {
       _history.add({'role': 'user', 'text': text});
+      // Fire-and-forget — the image itself isn't persisted (see
+      // ChatHistoryService.append's doc comment).
+      _chatHistory.append(role: 'user', text: text);
     }
 
     final reply = await _apiService.chatWithLexi(
       text.isEmpty ? 'Please help me with this.' : text,
-      3,
+      _standard,
+      weakness: _weakness,
       imageBase64: imageB64,
       history: historyToSend,
     );
@@ -148,17 +185,25 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     });
     _history.add({'role': 'lexi', 'text': _replyToText(reply)});
     if (_history.length > 20) _history.removeRange(0, _history.length - 20);
+    _chatHistory.append(role: 'lexi', data: reply); // fire-and-forget
     _scrollToBottom();
   }
 
-  /// A short plain-text version of a structured reply, for conversation memory.
+  /// A plain-text version of a structured reply, for conversation memory
+  /// replayed back to the model next turn. Keeps the reply's own `type` as a
+  /// prefix (e.g. "[writing_feedback]") rather than dropping it entirely —
+  /// the model otherwise has no way to tell a past hint from a past
+  /// explanation once it's been flattened to a bare string.
   String _replyToText(Map<String, dynamic> d) {
     final parts = [
-      d['text'], d['meaning'], d['hint'], d['did_well'], d['tip'],
+      d['text'], d['word'], d['meaning'], d['when_to_use'], d['hint'],
+      d['did_well'], d['to_improve'], d['next_step'], d['tip'],
       d['question'], d['check_question'], d['example'],
     ].where((v) => v != null && v.toString().trim().isNotEmpty).map((v) => v.toString());
     final joined = parts.join(' ');
-    return joined.isEmpty ? (d['type']?.toString() ?? '') : joined;
+    final type = d['type']?.toString();
+    if (joined.isEmpty) return type ?? '';
+    return type != null ? '[$type] $joined' : joined;
   }
 
   void _scrollToBottom() {

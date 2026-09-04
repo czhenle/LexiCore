@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../services/mastery_service.dart';
 import '../../services/supabase_service.dart';
 import '../home/home_screen.dart';
 import 'initial_assessment_screen.dart';
+import '../../theme/app_colors.dart';
 
 class OnboardingProfileScreen extends StatefulWidget {
   final String? username;
@@ -30,15 +32,16 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
   }
 
   // ✨ Sky Blue Theme mapped to the structural layout
-  static const Color _bg = Color(0xFFF0F8FF);
-  static const Color _skyBlueLight = Color(0xFFDFF1FF);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _textMid = Color(0xFF6B7280);
+  static const Color _bg = AppColors.skyBg;
+  static const Color _skyBlueLight = AppColors.skyLight;
+  static const Color _navyText = AppColors.navy;
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _textMid = AppColors.textMid;
   static const Color _card = Colors.white;
-  static const Color _divider = Color(0xFFE5E7EB);
+  static const Color _divider = AppColors.divider;
 
   int _selectedStandard = 3;
+  int _selectedPlanDuration = 7;
   String _selectedStudyTime = '15 minutes';
   String _selectedAge = '9';
   String _selectedGrade = ''; // required — no default baseline
@@ -105,6 +108,7 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
         studyTime: _selectedStudyTime,
         grade: _selectedGrade,
         rate: jsonEncode(_ratings),
+        planDurationDays: _selectedPlanDuration,
       );
 
       if (mounted) _askAssessment();
@@ -143,6 +147,10 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
                 ),
                 standard: _selectedStandard,
               );
+              // No completed test, but the self-eval above already seeded
+              // mastery — build the study plan immediately so Home doesn't
+              // depend on finishing separate module quizzes first.
+              await MasteryService().generateStudyPlan();
               if (mounted) {
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -156,7 +164,7 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
               Navigator.pop(context);
               Navigator.of(context).pushReplacement(
                 MaterialPageRoute(
-                  builder: (_) => const InitialAssessmentScreen(),
+                  builder: (_) => InitialAssessmentScreen(standard: _selectedStandard),
                 ),
               );
             },
@@ -248,6 +256,21 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
                       ),
                       const SizedBox(height: 12),
                       _buildStudyTimeSelector(),
+                    ]),
+                    const SizedBox(height: 16),
+
+                    // --- SECTION: Planning Duration ---
+                    _section(Icons.event_available_rounded, 'Planning Duration', [
+                      const Text(
+                        'How many days should your study plan cover?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: _textMid,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildPlanDurationSelector(),
                     ]),
 
                     if (_errorMessage.isNotEmpty)
@@ -639,6 +662,42 @@ class _OnboardingProfileScreenState extends State<OnboardingProfileScreen>
                     : null,
               ),
             ],
+          ),
+        ),
+      );
+    }).toList(),
+  );
+
+  // --- Planning Duration Selector (7 / 14 / 30 days) ---
+  Widget _buildPlanDurationSelector() => Row(
+    children: [7, 14, 30].map((days) {
+      final sel = _selectedPlanDuration == days;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _selectedPlanDuration = days),
+          child: Container(
+            margin: EdgeInsets.only(right: days == 30 ? 0 : 10),
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: sel ? _skyBlueLight.withValues(alpha: 0.5) : _bg,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: sel ? _buttonBlue : _divider, width: 1.5),
+            ),
+            child: Column(
+              children: [
+                Text('$days',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: sel ? _buttonBlue : _navyText)),
+                Text('days',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: sel ? _buttonBlue : _textMid)),
+              ],
+            ),
           ),
         ),
       );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
 import '../../services/api_service.dart';
+import '../../theme/app_colors.dart';
 
 class ArticleScreen extends StatefulWidget {
   const ArticleScreen({super.key});
@@ -10,10 +11,10 @@ class ArticleScreen extends StatefulWidget {
 }
 
 class _ArticleScreenState extends State<ArticleScreen> {
-  static const Color _bg = Color(0xFFF0F8FF);
-  static const Color _navyText = Color(0xFF003C8F);
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _brightOrange = Color(0xFFFF9800);
+  static const Color _bg = AppColors.skyBg;
+  static const Color _navyText = AppColors.navy;
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _brightOrange = AppColors.brightOrange;
 
   final _supabaseService = SupabaseService();
   final _apiService = ApiService();

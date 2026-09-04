@@ -57,7 +57,6 @@ Deno.serve(async (req) => {
       history = [],
       mode = "auto",
       standard = 3,
-      detected_level = 3,
       weakness = "Grammar",
       vocab_score = 0,
       grammar_score = 0,
@@ -99,7 +98,6 @@ You are a GUIDE, not an answer machine.`;
 
     const profile = `STUDENT PROFILE (use to set difficulty — do NOT claim to follow any official syllabus):
 - School standard: ${standard}
-- English level: ${detected_level}
 - Weakest skill: ${weakness}
 - Scores — Vocabulary ${vocab_score}/100, Grammar ${grammar_score}/100, Reading ${reading_score}/100, Writing ${writing_score}/100
 Match your difficulty to this level and give extra support in ${weakness}.`;

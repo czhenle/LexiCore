@@ -22,67 +22,6 @@ class ApiService {
         'Authorization': 'Bearer $publishableKey',
       };
 
-  // ── VOCABULARY MODULE ────────────────────────────────────────────────────
-  // mode: 'image' | 'spelling' | 'meaning' | 'context' | 'synonyms'
-  Future<Map<String, dynamic>?> generateVocabularyModule(
-      int level, String topic, String mode) async {
-    try {
-      final http.Response response = await http.post(
-        Uri.parse('$supabaseUrl/vocabulary'),
-        headers: _headers,
-        body: jsonEncode({
-          'standard': level,
-          'topic': topic,
-          'mode': mode,
-        }),
-      );
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      debugPrint('Vocab error [${response.statusCode}]: ${response.body}');
-      return null;
-    } catch (e) {
-      debugPrint('Vocab network error: $e');
-      return null;
-    }
-  }
-
-  // ── GRAMMAR MODULE ───────────────────────────────────────────────────────
-  // Returns flat list of questions across all selected topics
-  Future<List<dynamic>?> generateGrammarModule(
-      int level, List<String> topics, int questionsPerTopic) async {
-    try {
-      // Fire one request per topic in parallel
-      final futures = topics.map((topic) async {
-        final http.Response res = await http.post(
-          Uri.parse('$supabaseUrl/grammar'),
-          headers: _headers,
-          body: jsonEncode({
-            'standard': level,
-            'topic': topic,
-            'questions_per_topic': questionsPerTopic,
-          }),
-        );
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body);
-          final questions = (data['questions'] as List<dynamic>? ?? []);
-          // Tag each question with its topic
-          return questions.map((q) {
-            q['topic'] = topic;
-            return q;
-          }).toList();
-        }
-        return <dynamic>[];
-      });
-
-      final results = await Future.wait(futures);
-      final all = results.expand((q) => q).toList();
-      all.shuffle();
-      return all.isNotEmpty ? all : null;
-    } catch (e) {
-      debugPrint('Grammar network error: $e');
-      return null;
-    }
-  }
-
   // ── READING MODULE ───────────────────────────────────────────────────────
   Future<Map<String, dynamic>?> generateReadingModule(
       int level, String topic) async {
@@ -100,29 +39,6 @@ class ApiService {
       return null;
     } catch (e) {
       debugPrint('Reading network error: $e');
-      return null;
-    }
-  }
-
-  // ── WRITING MODULE ───────────────────────────────────────────────────────
-  // exerciseType: 'completion' | 'ordering' | 'correction' | 'composition'
-  Future<Map<String, dynamic>?> generateWritingModule(
-      int level, String topic, String exerciseType) async {
-    try {
-      final http.Response response = await http.post(
-        Uri.parse('$supabaseUrl/writing'),
-        headers: _headers,
-        body: jsonEncode({
-          'standard': level,
-          'topic': topic,
-          'exercise_type': exerciseType,
-        }),
-      );
-      if (response.statusCode == 200) return jsonDecode(response.body);
-      debugPrint('Writing error [${response.statusCode}]: ${response.body}');
-      return null;
-    } catch (e) {
-      debugPrint('Writing network error: $e');
       return null;
     }
   }
@@ -194,7 +110,6 @@ class ApiService {
   Future<Map<String, dynamic>> chatWithLexi(
     String message,
     int standard, {
-    int detectedLevel = 3,
     String weakness = 'Grammar',
     int vocabScore = 0,
     int grammarScore = 0,
@@ -211,7 +126,6 @@ class ApiService {
         body: jsonEncode({
           'message': message,
           'standard': standard,
-          'detected_level': detectedLevel,
           'weakness': weakness,
           'vocab_score': vocabScore,
           'grammar_score': grammarScore,

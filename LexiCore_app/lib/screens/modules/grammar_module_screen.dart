@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import '../../theme/app_colors.dart';
 import 'topic_picker_screen.dart';
 
-const Color _grammarColor = Color(0xFF4DB6AC);
+const Color _grammarColor = AppColors.mintGreen;
 
 /// Grammar's topic/whole-area picker — see TopicPickerScreen for the shared
 /// implementation (topics grouped by area from `sub_skills`, single
@@ -17,7 +18,7 @@ class GrammarModuleScreen extends StatelessWidget {
       appTitle: 'Grammar',
       heroTitle: 'Grammar Practice',
       heroIcon: Icons.rule_rounded,
-      gradientColors: [Color(0xFF00796B), Color(0xFF4DB6AC), Color(0xFF80CBC4)],
+      gradientColors: [Color(0xFF00796B), AppColors.mintGreen, Color(0xFF80CBC4)],
       accentColor: _grammarColor,
       emptyMessage: 'No Grammar topics available yet.',
     );

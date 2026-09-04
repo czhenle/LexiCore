@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import '../../models/learner_model.dart';
 import '../../services/supabase_service.dart';
@@ -10,9 +12,28 @@ import '../modules/vocabulary_module_screen.dart';
 import '../modules/grammar_module_screen.dart';
 import '../modules/reading_module_screen.dart';
 import '../modules/writing_module_screen.dart';
+import '../modules/essay_writing_screen.dart';
+import '../modules/weekly_assessment_screen.dart';
 import '../ai_chatbot/ai_chatbot_screen.dart';
 import '../user_profiling/user_profile_screen.dart';
 import '../modules/adaptive_practice_screen.dart';
+import '../../theme/app_colors.dart';
+
+/// One row in the notification bell's feed — see _showNotifications().
+class _Notice {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  const _Notice({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+  });
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,16 +44,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   // Foundation Colors
-  static const Color _bg         = Color(0xFFF0F8FF); // Soft Sky Blue background
-  static const Color _navyText   = Color(0xFF003C8F);
-  
+  static const Color _bg         = AppColors.skyBg; // Soft Sky Blue background
+  static const Color _navyText   = AppColors.navy;
+
   // Vibrant Candy Colors for UI Elements
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _starYellow = Color(0xFFFFD54F);
-  static const Color _mintGreen  = Color(0xFF4DB6AC);
-  static const Color _coralRed   = Color(0xFFE57373);
-  static const Color _lightblue = Color(0xFF64B5F6);
-  static const Color _brightOrange  = Color(0xFFFF9800);
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _starYellow = AppColors.starYellow;
+  static const Color _mintGreen  = AppColors.mintGreen;
+  static const Color _coralRed   = AppColors.coralRed;
+  static const Color _lightblue = AppColors.lightBlue;
+  static const Color _brightOrange  = AppColors.brightOrange;
 
   final _supabaseService = SupabaseService();
   final _mastery = MasteryService();
@@ -41,14 +62,15 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
   String _username      = '';
-  int    _detectedLevel = 3;
   bool   _isLoading     = true;
+  bool   _todayCompleted = false;
 
   // Today's task from the stored weekly schedule (see MasteryService's
   // getOrGenerateWeeklySchedule/getTodayTask) — {day, skill, task_label,
   // sub_skill_code} for a normal day, or {type: 'assessment'|'rest', ...}.
   Map<String, dynamic>? _todayTask;
   String? _weekGoal;
+  Map<String, int> _progressPercents = const {};
 
   static const Map<String, Color> _skillColorMap = {
     'Vocabulary': _brightOrange,
@@ -69,21 +91,141 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadData();
   }
 
+  /// A red dot on the bell whenever there's something worth the student's
+  /// attention right now — kept in sync with what _showNotifications()
+  /// actually lists, not a separate guess.
+  bool get _hasNotifications =>
+      !_isLoading && (!_todayCompleted && _todayTask?['type'] != 'rest');
+
+  void _showNotifications() {
+    final task = _todayTask;
+    final isRestDay = task?['type'] == 'rest';
+    final isAssessment = task?['type'] == 'assessment';
+    final label = task?['task_label'] as String?;
+
+    final notices = <_Notice>[
+      if (!_todayCompleted && !isRestDay && task != null)
+        _Notice(
+          icon: isAssessment ? Icons.fact_check_rounded : Icons.bolt_rounded,
+          color: isAssessment ? AppColors.purple : _brightOrange,
+          title: isAssessment ? 'Weekly Assessment ready' : "Today's task is waiting",
+          subtitle: label ?? 'Tap to get started',
+          onTap: () {
+            Navigator.pop(context);
+            _startTodayTask(task);
+          },
+        ),
+      if (_todayCompleted)
+        _Notice(
+          icon: Icons.celebration_rounded,
+          color: _mintGreen,
+          title: "Today's task is done!",
+          subtitle: 'Nice work — come back tomorrow for the next one.',
+        ),
+      if (isRestDay)
+        _Notice(
+          icon: Icons.spa_rounded,
+          color: _lightblue,
+          title: 'Rest day',
+          subtitle: 'No task scheduled today — enjoy the break!',
+        ),
+      _Notice(
+        icon: Icons.notifications_active_rounded,
+        color: _mintGreen,
+        title: 'Study reminders',
+        subtitle: 'Set a daily nudge from your Profile',
+        onTap: () {
+          Navigator.pop(context);
+          setState(() => _selectedIndex = 4); // Profile tab
+        },
+      ),
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Notifications',
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w900, color: _navyText)),
+              const SizedBox(height: 12),
+              ...notices.map((n) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Material(
+                      color: n.color.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(16),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: n.onTap,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(children: [
+                            Icon(n.icon, color: n.color, size: 22),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(n.title,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14,
+                                          color: _navyText)),
+                                  const SizedBox(height: 2),
+                                  Text(n.subtitle,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _navyText.withValues(alpha: 0.6))),
+                                ],
+                              ),
+                            ),
+                          ]),
+                        ),
+                      ),
+                    ),
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadData() async {
     try {
+      // Safety net: re-seeds skill_mastery from the persisted assessment
+      // if it's somehow still empty (the one-shot call right after the
+      // pre-assessment can fail silently) — a no-op once it has any rows.
+      // Without this, masterySummary()/generateStudyPlan() below have
+      // nothing to work with and Today's Task/the schedule never appear.
+      await _mastery.ensureMasterySeeded();
+
       final profile    = await _supabaseService.getStudentProfile();
       final assessment = await _supabaseService.getAssessmentResults();
       final summary    = await _mastery.masterySummary();
       final todayTask  = await _mastery.getTodayTask();
-      final plan       = await _mastery.getOrGenerateWeeklySchedule();
+      final plan       = await _mastery.getOrGenerateStudyPlan();
+
+      final todayIso = _mastery.todayIso();
+      final completedDays = Set<String>.from(
+          (plan?['completed_days'] as List?)?.cast<String>() ?? const []);
 
       if (mounted) {
         setState(() {
-          _username      = (profile?['username']         as String?) ?? 'Student';
-          _detectedLevel = (assessment?['detected_level'] as int?)   ?? 3;
+          _username      = (profile?['username'] as String?) ?? 'Student';
           _summary       = summary;
           _todayTask     = todayTask;
-          _weekGoal      = plan?['week_goal'] as String?;
+          _todayCompleted = completedDays.contains(todayIso);
+          _weekGoal      = plan?['plan_goal'] as String?;
+          _progressPercents = _computeProgressPercents(assessment, profile);
           _isLoading     = false;
         });
       }
@@ -93,24 +235,48 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Live per-skill score (0-100) from the mastery map, the same source of
-  /// truth `_buildLearningCard()` already uses — falls back to 0 until the
-  /// student has any skill_mastery data yet.
-  double _liveScore(String skill) {
-    final avg = _summary?.avgRungBySkill[skill];
-    return avg == null ? 0 : avg / 5 * 100;
+  /// The progress card's 4 percentages: real assessment scores if the
+  /// student completed the test, else their self-evaluation ratings (1-5,
+  /// stored as JSON in `student_profiles.rate`) scaled to 0-100 — never the
+  /// live mastered-rung average, which is poorly calibrated right after a
+  /// fresh seed. `_buildLearningCard()` below is the separate live-mastery
+  /// view (updated by ongoing adaptive practice), deliberately distinct
+  /// from this assessment/self-eval snapshot.
+  Map<String, int> _computeProgressPercents(
+      Map<String, dynamic>? assessment, Map<String, dynamic>? profile) {
+    const skills = ['Vocabulary', 'Grammar', 'Reading', 'Writing'];
+    if (assessment != null) {
+      const keys = {
+        'Vocabulary': 'vocabulary_score',
+        'Grammar': 'grammar_score',
+        'Reading': 'reading_score',
+        'Writing': 'writing_score',
+      };
+      return {
+        for (final s in skills) s: (assessment[keys[s]] as int?) ?? 0,
+      };
+    }
+    final rateRaw = profile?['rate'] as String?;
+    if (rateRaw != null && rateRaw.isNotEmpty) {
+      try {
+        final ratings = Map<String, dynamic>.from(jsonDecode(rateRaw) as Map);
+        return {
+          for (final s in skills)
+            s: ((int.tryParse(ratings[s]?.toString() ?? '') ?? 0) * 20)
+                .clamp(0, 100),
+        };
+      } catch (_) {
+        // fall through to zeros below — malformed/missing self-eval data.
+      }
+    }
+    return {for (final s in skills) s: 0};
   }
 
-  String get _weaknessSkill {
-    final scores = {
-      for (final s in const ['Vocabulary', 'Grammar', 'Reading', 'Writing'])
-        s: _liveScore(s),
-    };
-    return scores.entries.reduce((a, b) => a.value <= b.value ? a : b).key;
-  }
-  
-  // Navigates directly to the correct module screen based on today's skill
-  void _startMission(String skill) {
+  // Navigates directly to the correct module screen based on today's skill.
+  // Returns the push's Future so a caller that cares when the session ends
+  // (_startTodayTask, to mark today's task complete) can await it — callers
+  // that don't (the "choose a skill yourself" button) just don't await it.
+  Future<void> _startMission(String skill) {
     Widget destination;
     switch (skill) {
       case 'Vocabulary':
@@ -128,7 +294,7 @@ class _HomeScreenState extends State<HomeScreen> {
       default:
         destination = const VocabularyModuleScreen();
     }
-    Navigator.push(
+    return Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => destination),
     );
@@ -169,22 +335,45 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
               ),
               actions: [
-                // Notification / info icon
+                // Notifications — a quick feed of what needs the student's
+                // attention right now (today's task, an available weekly
+                // assessment, ...), derived live from what Home already
+                // knows rather than a separate stored inbox. Used to be
+                // purely decorative (no tap handler at all).
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
-                  child: Container(
-                    width: 38, height: 38,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.07),
-                            blurRadius: 8)
-                      ],
+                  child: GestureDetector(
+                    onTap: _showNotifications,
+                    child: Container(
+                      width: 38, height: 38,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.07),
+                              blurRadius: 8)
+                        ],
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Center(
+                            child: Icon(Icons.notifications_rounded,
+                                color: _starYellow, size: 20),
+                          ),
+                          if (_hasNotifications)
+                            Positioned(
+                              top: 6, right: 7,
+                              child: Container(
+                                width: 8, height: 8,
+                                decoration: const BoxDecoration(
+                                    color: _coralRed, shape: BoxShape.circle),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                    child: const Icon(Icons.notifications_rounded,
-                        color: _starYellow, size: 20),
                   ),
                 ),
               ],
@@ -218,12 +407,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: _navyText,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Level $_detectedLevel learner — keep it up!',
-            style: TextStyle(fontSize: 15, color: _navyText.withValues(alpha: 0.7), fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 20),
 
           // ── Today's Task: progress, strengths, weaknesses, start ──
           _sectionLabel('Today\'s Task'),
@@ -442,29 +626,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startTodayTask(Map<String, dynamic> task) async {
     final type = task['type'] as String?;
     if (type == 'assessment') {
-      final queue = await _mastery.buildWeeklyAssessmentQueue();
-      if (queue.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Finish a few practice sessions first, then come back for your weekly assessment!')));
-        }
-        return;
-      }
-      if (!mounted) return;
+      // WeeklyAssessmentScreen builds its own plan (batch-generated, like
+      // the pre-assessment) and orchestrates the quiz + any Writing task —
+      // see its doc comment. onCompleted only fires if the WHOLE thing was
+      // genuinely finished, not on an early exit from any of its steps.
+      var completed = false;
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => AdaptivePracticeScreen(
-            fixedQueue: queue,
-            resultModuleName: 'Weekly Assessment',
-            resultColor: const Color(0xFF6A1B9A),
-            resultIcon: Icons.fact_check_rounded,
-            onSessionComplete: (answered, correct) {
-              _mastery.saveWeeklyCheckin(itemsAnswered: answered, itemsCorrect: correct);
-            },
-          ),
+          builder: (_) => WeeklyAssessmentScreen(onCompleted: () => completed = true),
         ),
       );
+      if (!completed) return;
       await _mastery.markTodayTaskComplete();
       if (mounted) _loadData();
       return;
@@ -472,24 +645,98 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final subSkillCode = task['sub_skill_code'] as String?;
     final skill = (task['skill'] as String?) ?? 'Grammar';
+
+    // Reading always routes to its real module (a real passage + batch-
+    // generated questions, grounded together) — the generic one-item
+    // adaptive loop below has no passage to ground questions in. Pushed
+    // directly (not via _startMission) so onCompleted can gate the
+    // completion tick on genuinely finishing the question set.
+    if (skill == 'Reading') {
+      var completed = false;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ReadingModuleScreen(onCompleted: () => completed = true),
+        ),
+      );
+      if (!completed) return;
+      await _mastery.markTodayTaskComplete();
+      if (mounted) _loadData();
+      return;
+    }
+
+    // Writing's only 2 sub-skills ARE the 2 composition modes (see the
+    // writing_mode_sub_skills migration) — so a Writing day always means
+    // "generate this exact composition task", never a picker. Going through
+    // WritingModuleScreen (its mode-CHOOSING screen) would let the student
+    // pick a different mode than the one actually targeted, and drops the
+    // submit-button/timer UI EssayWritingScreen gives that task. Push it
+    // directly instead — same as Vocabulary/Grammar below, adaptive
+    // targeting just decided WHICH task, not whether to ask first.
+    if (skill == 'Writing') {
+      final mode = subSkillCode == 'writing.mode_free' ? 'free' : 'guided';
+      if (!mounted) return;
+      var completed = false;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EssayWritingScreen(
+            mode: mode,
+            onCompleted: () => completed = true,
+          ),
+        ),
+      );
+      if (!completed) return;
+      await _mastery.markTodayTaskComplete();
+      if (mounted) _loadData();
+      return;
+    }
+
     if (subSkillCode == null) {
       _startMission(skill);
       return;
     }
 
+    final studyMinutes = await _mastery.studentStudyMinutes();
+    final count = _mastery.recommendedQueueCount(studyMinutes);
+    if (!mounted) return;
+    // Only mark today's task complete if the session genuinely finished
+    // (onSessionComplete fires from inside _finishQueueSession — the whole
+    // queue was answered) — NOT just because the pushed screen eventually
+    // got popped. Exiting early via the X button pops the route without
+    // ever firing this, so `completed` stays false and the schedule
+    // correctly doesn't tick the day off.
+    var completed = false;
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => AdaptivePracticeScreen(
-          fixedQueue: [PracticeQueueItem(subSkillCode, 8)],
+          fixedQueue: [PracticeQueueItem(subSkillCode, count)],
           resultModuleName: skill,
           resultColor: _skillColorMap[skill],
           resultIcon: _skillIconMap[skill],
+          // Renders through the same per-module visual style Vocabulary/
+          // Grammar's own module screens use (accent app bar, progress
+          // bar, card layout) — only the targeting (one weak sub-skill,
+          // adaptive rung) differs from picking a topic yourself.
+          moduleStyle: true,
+          onSessionComplete: (answered, correct) => completed = true,
         ),
       ),
     );
+    if (!completed) return;
     await _mastery.markTodayTaskComplete();
-    if (mounted) _loadData();
+    if (mounted) {
+      // Today's Task deliberately only claims part of the declared study
+      // budget (see recommendedQueueCount's doc comment) — nudge the
+      // student toward the rest of their time instead of just stopping.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            "Nice work! Still got time today — try another module from Modules 👇"),
+        duration: Duration(seconds: 4),
+      ));
+      _loadData();
+    }
   }
 
   Widget _skillPill(String emoji, String label, String skill, Color color) {
@@ -531,49 +778,15 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Skill score bars with Candy Colors! Sourced from the live mastery
-          // map (same source as the learning card above) rather than the
-          // static one-time assessment score, so this never drifts out of
-          // sync with actual practice.
-          _scoreBar('Vocabulary', _liveScore('Vocabulary').round(), _brightOrange),
-          _scoreBar('Grammar',    _liveScore('Grammar').round(),    _mintGreen),
-          _scoreBar('Reading',    _liveScore('Reading').round(),    _lightblue),
-          _scoreBar('Writing',    _liveScore('Writing').round(),    _coralRed),
-          const SizedBox(height: 16),
-
-          // Divider
-          Container(height: 2, color: const Color(0xFFF0F8FF)),
-          const SizedBox(height: 16),
-
-          // Strength / Weakness row
-          const SizedBox(height: 18),
-
-          // Recommendation (Mint Green)
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: _mintGreen.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                  color: _mintGreen.withValues(alpha: 0.3), width: 2),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.tips_and_updates_rounded,
-                    color: _mintGreen, size: 22),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Focus on $_weaknessSkill to level up faster!',
-                    style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.teal.shade800,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // Skill score bars — real assessment scores once the student has
+          // taken the test, else their self-evaluation ratings scaled to a
+          // percentage (see _computeProgressPercents). A deliberately
+          // static snapshot, not the live mastery map — that's what
+          // _buildLearningCard's overall %/pills track instead.
+          _scoreBar('Vocabulary', _progressPercents['Vocabulary'] ?? 0, _brightOrange),
+          _scoreBar('Grammar',    _progressPercents['Grammar'] ?? 0,    _mintGreen),
+          _scoreBar('Reading',    _progressPercents['Reading'] ?? 0,    _lightblue),
+          _scoreBar('Writing',    _progressPercents['Writing'] ?? 0,    _coralRed),
         ],
       ),
     );
@@ -602,7 +815,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 76, height: 76,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFFFFD54F), Color(0xFFFF9800)], // Sunny Yellow to Orange
+                  colors: [_starYellow, _brightOrange], // Sunny Yellow to Orange
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),

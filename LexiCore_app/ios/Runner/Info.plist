@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>LexiCore uses your camera to let you photograph handwritten essays for Essay Writing.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>LexiCore uses your photo library so you can choose a profile picture.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

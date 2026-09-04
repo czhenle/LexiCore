@@ -54,6 +54,7 @@ class SupabaseService {
     required String studyTime,
     required String grade,
     required String rate,
+    int planDurationDays = 7,
   }) async {
     final userId = currentUser!.id;
     await supabase.from('student_profiles').upsert({
@@ -64,6 +65,7 @@ class SupabaseService {
       'study_time': studyTime,
       'grade': grade,
       'rate': rate,
+      'plan_duration_days': planDurationDays,
     }, onConflict: 'user_id');
   }
 
@@ -80,26 +82,28 @@ class SupabaseService {
 
   // ── ASSESSMENT RESULTS ────────────────────────────────────────────────────
 
+  /// `readingScore`/`writingScore` are null when that skill wasn't part of
+  /// this assessment (Standard 1-2 skip both — Reading's MCQs and the
+  /// Writing Sample only run for Standard >=3) — stored as a genuine NULL
+  /// rather than a misleading 0.
+  ///
+  /// Used to also compute and save a `detected_level` (declared standard
+  /// ±1 based on average score) — removed: `assessment_results` never
+  /// actually had that column, so every save was silently failing (a
+  /// PostgREST "unknown column" error), taking skill_mastery seeding and
+  /// the study plan down with it since they shared one try/catch. It was
+  /// also redundant with the real adaptive engine now in place — the live
+  /// per-sub-skill Elo/mastered_rung in `skill_mastery` already tracks
+  /// ability far more precisely than a one-time ±1-standard nudge ever did.
+  /// `student_profiles.standard` (the declared standard) is the one
+  /// standard value used everywhere now.
   Future<void> saveAssessmentResults({
     required int vocabularyScore,
     required int grammarScore,
-    required int readingScore,
-    required int writingScore,
+    int? readingScore,
+    int? writingScore,
   }) async {
     final userId = currentUser!.id;
-
-    final profile = await getStudentProfile();
-    final declaredStandard = (profile?['standard'] as int?) ?? 3;
-    final avgScore = (vocabularyScore + grammarScore + readingScore + writingScore) ~/ 4;
-
-    int detectedLevel;
-    if (avgScore < 40) {
-      detectedLevel = (declaredStandard - 1).clamp(1, 6);
-    } else if (avgScore > 70) {
-      detectedLevel = (declaredStandard + 1).clamp(1, 6);
-    } else {
-      detectedLevel = declaredStandard;
-    }
 
     await supabase.from('assessment_results').upsert({
       'user_id': userId,
@@ -107,7 +111,6 @@ class SupabaseService {
       'grammar_score': grammarScore,
       'reading_score': readingScore,
       'writing_score': writingScore,
-      'detected_level': detectedLevel,
       'taken_at': DateTime.now().toIso8601String(),
     }, onConflict: 'user_id');
   }

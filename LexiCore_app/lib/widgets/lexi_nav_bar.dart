@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
 
 class LexiNavBar extends StatelessWidget {
   final int selectedIndex;
@@ -11,8 +12,8 @@ class LexiNavBar extends StatelessWidget {
   });
 
   // Updated to the Sky Blue Theme
-  static const Color _buttonBlue = Color(0xFF1E88E5);
-  static const Color _navyText   = Color(0xFF003C8F);
+  static const Color _buttonBlue = AppColors.blue;
+  static const Color _navyText   = AppColors.navy;
 
   static const List<_NavItem> _items = [
     _NavItem(Icons.home_rounded,           'Home'),

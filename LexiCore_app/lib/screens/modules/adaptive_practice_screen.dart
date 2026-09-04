@@ -5,7 +5,20 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/learner_model.dart';
 import '../../services/mastery_service.dart';
 import '../../widgets/tutor_sheet.dart';
+import '../../widgets/generating_status.dart';
+import '../../theme/app_colors.dart';
 import 'result_screen.dart';
+
+/// What _decideFocus() picks for the next item — everything _fetchItem()
+/// needs, resolved once so a prefetch and the real fetch never disagree.
+typedef _FocusPick = ({
+  FocusDecision focus,
+  String skill,
+  String format,
+  String name,
+  List<String> recentErrors,
+  List<String> recentQuestions,
+});
 
 /// The adaptive practice loop (PS1). Reads the seeded mastery map, uses
 /// AdaptivePolicy to choose the next sub-skill + rung, serves an item, and
@@ -40,6 +53,37 @@ class AdaptivePracticeScreen extends StatefulWidget {
   /// the underlying generate/grade/persist engine is identical either way.
   final bool moduleStyle;
 
+  /// Reading's one-passage-per-session mechanism: fetched once by the caller
+  /// (ReadingModuleScreen) before this screen opens, then threaded into
+  /// every `generate` call for the whole session as `context_passage` so
+  /// every question is grounded in the same passage. Null for every other
+  /// skill. When set, a "Read passage" button appears so the student can
+  /// reread it mid-session.
+  final String? contextPassage;
+
+  /// When set, the WHOLE session was already batch-generated upfront (see
+  /// MasteryService.batchGenerateQueue) — items are served from this list in
+  /// order instead of one `generate` call per question. Always paired with
+  /// `fixedQueue` describing the same session (same length, same order);
+  /// `fixedQueue` still drives the declarative "Question X of Y" progress
+  /// count, this is what's actually shown. Answering/grading/persisting is
+  /// completely unaffected — only the fetch side changes. The trade-off:
+  /// every item's rung was decided once, from the confirmed-gate snapshot
+  /// at generation time, not re-derived as the student answers — a
+  /// confirmation window can still resolve mid-session, it just won't
+  /// change the content of items already generated in this batch.
+  final List<Map<String, dynamic>>? preloadedItems;
+
+  /// When true, a finished fixed-queue session just calls onSessionComplete
+  /// and pops itself, instead of navigating to the standalone ResultScreen.
+  /// For a caller chaining several of these together as ONE bigger flow
+  /// (WeeklyAssessmentScreen: quiz -> passage -> quiz -> composition) —
+  /// ResultScreen's own "Back to home"/"Try again" buttons clear the ENTIRE
+  /// navigation stack via pushAndRemoveUntil, which would blow away that
+  /// chain mid-flow the moment one segment finished. The caller shows its
+  /// own single result screen at the very end instead.
+  final bool skipResultScreen;
+
   const AdaptivePracticeScreen({
     super.key,
     this.focusSkill,
@@ -49,6 +93,9 @@ class AdaptivePracticeScreen extends StatefulWidget {
     this.resultIcon,
     this.onSessionComplete,
     this.moduleStyle = false,
+    this.contextPassage,
+    this.preloadedItems,
+    this.skipResultScreen = false,
   });
 
   @override
@@ -56,24 +103,14 @@ class AdaptivePracticeScreen extends StatefulWidget {
 }
 
 class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
-  static const _navy = Color(0xFF003C8F);
-  static const _blue = Color(0xFF1E88E5);
-  static const _bg = Color(0xFFF0F8FF);
-  static const _moduleTextDark = Color(0xFF1A1A2E);
-  static const _moduleTextMid = Color(0xFF6B7280);
+  static const _navy = AppColors.navy;
+  static const _blue = AppColors.blue;
+  static const _bg = AppColors.skyBg;
+  static const _moduleTextDark = AppColors.textDark;
+  static const _moduleTextMid = AppColors.textMid;
 
   Color get _accent => widget.resultColor ?? _blue;
 
-  // Rung -> format per skill. Fallback only — the live source of truth is the
-  // `rung_formats` table (see MasteryService.rungFormats()), used whenever
-  // it's reachable and populated. This constant just keeps the loop working
-  // if that table is ever empty or unreachable.
-  static const Map<String, List<String>> _fallbackFormats = {
-    'Vocabulary': ['meaning_match', 'mcq_word_meaning', 'cloze_sentence_wordbank', 'cloze_paragraph_open', 'open_sentence'],
-    'Grammar':    ['worked_example', 'mcq_identify_or_error', 'gap_fill', 'transform_or_reorder', 'open_sentence'],
-    'Reading':    ['vocab_preview', 'mcq_literal', 'sequence_order', 'mcq_inference', 'open_response'],
-    'Writing':    ['punctuation_fix', 'sentence_complete', 'sentence_combine', 'guided_composition', 'free_composition'],
-  };
 
   final _svc = MasteryService();
 
@@ -106,6 +143,9 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   // Fixed-queue mode (widget.fixedQueue != null): (subSkillCode, count) pairs
   // expanded into a flat, front-to-back list; session totals feed ResultScreen.
   List<String> _flatQueue = [];
+  // Parallel to _flatQueue — non-null when that slot's PracticeQueueItem
+  // pinned a format (Vocabulary's mode-cards), overriding the rung-derived one.
+  List<String?> _flatFormatOverride = [];
   int _queuePos = 0;
   int _sessionAnswered = 0;
   int _sessionCorrect = 0;
@@ -116,18 +156,29 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   // Session error memory: sub_skill_code -> recent wrong-answer notes.
   final Map<String, List<String>> _errorLog = {};
 
-  // Checkpoint (re-assessment) state.
-  static const int _cpItems = 3;    // items in a checkpoint
-  static const int _cpPassMark = 2; // correct needed to pass (2 of 3)
+  // Checkpoint / re-assessment gate. A rung only counts as CONFIRMED once
+  // the student proves it over a short window, not on a single lucky
+  // answer — but unlike the old design, that window is never a separate,
+  // visibly-inserted detour. _targetRung/nextTargetRung already hold the
+  // served rung at confirmed+1 until it's confirmed, so the window's
+  // attempts are just whichever of the student's own next questions happen
+  // to land at that rung — same queue, same count, no banner.
   final Map<String, int> _confirmed = {}; // sub_skill -> confirmed rung
-  bool _inCheckpoint = false;
-  bool _cpFinished = false;
-  bool _cpPassed = false;
-  int _cpRung = 0;
-  int _cpDone = 0;
-  int _cpCorrect = 0;
-  double _cpPreAbility = 0;
-  String? _cpSubSkill;
+  static const int _cpItems = 3;    // attempts in a confirmation window
+  static const int _cpPassMark = 2; // correct needed to pass (2 of 3)
+  final Map<String, int> _cpWindowRung = {};    // sub_skill -> rung being confirmed
+  final Map<String, int> _cpWindowDone = {};
+  final Map<String, int> _cpWindowCorrect = {};
+  final Map<String, double> _cpWindowPreAbility = {};
+
+  // Prefetch: kicked off as soon as an answer is graded (see
+  // _gradeAndPersist), while the feedback panel is showing, so _next() can
+  // usually just reveal an item that's already fetched instead of a
+  // "Generating…" spinner. Non-null only when a prefetch was started for
+  // exactly the transition _next() is about to make; _next() always clears
+  // it and falls back to fetching fresh if it's absent or was for something
+  // else (e.g. right after a failed-fetch retry).
+  ({_FocusPick pick, Future<Map<String, dynamic>> future})? _prefetch;
 
   @override
   void initState() {
@@ -148,6 +199,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       _flatQueue = [
         for (final q in widget.fixedQueue!)
           for (var i = 0; i < q.count; i++) q.subSkillCode,
+      ];
+      _flatFormatOverride = [
+        for (final q in widget.fixedQueue!)
+          for (var i = 0; i < q.count; i++) q.format,
       ];
       // Sub-skills should already be seeded (assessment/skip-path seed every
       // sub-skill), but guard against a gap so the queue never dead-ends.
@@ -188,25 +243,31 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   String _formatFor(String skill, int rung) {
     final fromDb = _dbFormats[skill]?[rung];
     if (fromDb != null) return fromDb;
-    return (_fallbackFormats[skill] ?? _fallbackFormats['Grammar']!)[(rung - 1).clamp(0, 4)];
+    return (rungFormatFallback[skill] ?? rungFormatFallback['Grammar']!)[(rung - 1).clamp(0, 4)];
   }
 
-  Future<void> _next() async {
+  /// Picks the next sub-skill/rung/format — the deciding half of what used
+  /// to be all of _next(). Mutates _queuePos (fixed-queue mode) exactly
+  /// once per call, so this must only ever be called once per transition —
+  /// either eagerly by _prefetchNext() or lazily by _next() itself, never
+  /// both for the same item. Returns null when a fixed queue is exhausted.
+  Future<_FocusPick?> _decideFocus() async {
     final FocusDecision focus;
-    if (_inCheckpoint && !_cpFinished) {
-      // Serve a checkpoint item: same sub-skill, fixed checkpoint rung.
-      final m = _states.firstWhere((s) => s.subSkillCode == _cpSubSkill);
-      focus = FocusDecision(m.subSkillCode, _cpRung,
-          EloConfig.itemDifficulty(m.standard, _cpRung), 0);
-    } else if (widget.fixedQueue != null) {
-      if (_queuePos >= _flatQueue.length) {
-        _finishQueueSession();
-        return;
-      }
+    // Set only by the fixed-queue branch below, when that slot's
+    // PracticeQueueItem pinned a format (Vocabulary's mode-cards) — null
+    // everywhere else, falling through to the normal rung-derived format.
+    String? queuedFormat;
+    if (widget.fixedQueue != null) {
+      if (_queuePos >= _flatQueue.length) return null;
       final code = _flatQueue[_queuePos];
+      queuedFormat = _flatFormatOverride[_queuePos];
       _queuePos++;
       final m = _states.firstWhere((s) => s.subSkillCode == code);
-      final rung = m.nextTargetRung();
+      // Confirmed-gated, exactly like the adaptive branch below — holds the
+      // rung steady at confirmed+1 across as many queue items as it takes to
+      // pass its confirmation window, instead of jumping ahead the moment
+      // ability crosses the threshold (see _gradeAndPersist).
+      final rung = _targetRung(m);
       focus = FocusDecision(code, rung, EloConfig.itemDifficulty(_standard, rung), 0);
     } else {
       final picked = AdaptivePolicy().selectNext(_activeStates(), _skillOf);
@@ -217,14 +278,82 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
           EloConfig.itemDifficulty(m.standard, rung), picked.priority);
     }
     final skill = _skillOf(focus.subSkillCode);
-    final format = _formatFor(skill, focus.rungNumber);
+    final format = queuedFormat ?? _formatFor(skill, focus.rungNumber);
     final name = _codeToName[focus.subSkillCode] ?? focus.subSkillCode;
     final recentErrors = (_errorLog[focus.subSkillCode] ?? const <String>[])
         .reversed
         .take(3)
         .toList();
+    final recentQuestions = await _svc.recentQuestions(focus.subSkillCode);
+    return (
+      focus: focus,
+      skill: skill,
+      format: format,
+      name: name,
+      recentErrors: recentErrors,
+      recentQuestions: recentQuestions,
+    );
+  }
+
+  /// Fire-and-forget, called right when an answer is graded (see
+  /// _gradeAndPersist) — decides + starts fetching the NEXT item while the
+  /// feedback panel is still showing, so by the time the student taps "Next
+  /// question" it's often already in hand. Safe to call unconditionally:
+  /// _next() only adopts this if it's still there when needed, and falls
+  /// back to a fresh fetch otherwise (queue exhausted, prefetch failed and
+  /// was already consumed, or this simply hasn't resolved into anything).
+  /// A no-op for a preloaded session — nothing to fetch, and _decideFocus()
+  /// would wrongly double-advance _queuePos alongside _next()'s own
+  /// preloaded-item branch.
+  Future<void> _prefetchNext() async {
+    if (widget.preloadedItems != null) return;
+    final pick = await _decideFocus();
+    if (!mounted || pick == null) return;
+    final future = _fetchItem(pick.focus, pick.skill, pick.name, pick.format,
+        pick.recentErrors, pick.recentQuestions);
+    future.ignore(); // avoid an unhandled-error warning if never consumed below
+    _prefetch = (pick: pick, future: future);
+  }
+
+  Future<void> _next() async {
+    // Batch-preloaded session — no fetch, no prefetch, just serve the next
+    // already-generated item. See the `preloadedItems` field comment.
+    if (widget.preloadedItems != null) {
+      if (_queuePos >= widget.preloadedItems!.length) {
+        _finishQueueSession();
+        return;
+      }
+      final item = widget.preloadedItems![_queuePos];
+      _queuePos++;
+      final code = item['sub_skill'] as String;
+      final rung = item['rung'] as int;
+      final focus =
+          FocusDecision(code, rung, EloConfig.itemDifficulty(_standard, rung), 0);
+      setState(() {
+        _focus = focus;
+        _item = item;
+        _fetching = false;
+        _loadError = null;
+        _selected = null;
+        _answered = false;
+        _grading = false;
+        _gradeFeedback = null;
+        _gradeUnavailable = false;
+        _pendingResponse = null;
+        _answerCtrl.clear();
+      });
+      return;
+    }
+
+    final prefetched = _prefetch;
+    _prefetch = null;
+    final pick = prefetched?.pick ?? await _decideFocus();
+    if (pick == null) {
+      _finishQueueSession();
+      return;
+    }
     setState(() {
-      _focus = focus;
+      _focus = pick.focus;
       _item = null;
       _fetching = true;
       _loadError = null;
@@ -243,7 +372,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     // corrupted the student's ability score.
     Map<String, dynamic> item;
     try {
-      item = await _fetchItem(focus, skill, name, format, recentErrors);
+      item = prefetched != null
+          ? await prefetched.future
+          : await _fetchItem(pick.focus, pick.skill, pick.name, pick.format,
+              pick.recentErrors, pick.recentQuestions);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -277,7 +409,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
 
   /// Calls the `generate` Edge Function and normalises the returned item.
   Future<Map<String, dynamic>> _fetchItem(FocusDecision focus, String skill,
-      String name, String format, List<String> recentErrors) async {
+      String name, String format, List<String> recentErrors,
+      List<String> recentQuestions) async {
     final res =
         await Supabase.instance.client.functions.invoke('generate', body: {
       'skill': skill,
@@ -288,6 +421,8 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       'standard': _standard,
       'target_difficulty': focus.targetDifficulty,
       'recent_errors': recentErrors,
+      'recent_questions': recentQuestions,
+      if (widget.contextPassage != null) 'context_passage': widget.contextPassage,
     });
     final data = res.data;
     // A 200 with item:null is the validate-and-repair loop giving up after
@@ -382,75 +517,92 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
       {required bool isChoice}) async {
     if (_focus == null || _item == null) return;
     final m = _states.firstWhere((s) => s.subSkillCode == _focus!.subSkillCode);
+    final code = _focus!.subSkillCode;
+    final servedRung = _focus!.rungNumber;
 
     if (!correct) _recordError(isChoice, response);
 
-    m.recordAttempt(rungNumber: _focus!.rungNumber, correct: correct);
+    m.recordAttempt(rungNumber: servedRung, correct: correct);
     _lastCorrect = correct;
     _sessionAnswered++;
     if (correct) _sessionCorrect++;
 
-    // ── Checkpoint state machine ─────────────────────────────────────────
-    bool cpJustFinished = false;
-    if (_inCheckpoint) {
-      _cpDone += 1;
-      if (correct) _cpCorrect += 1;
-      if (_cpDone >= _cpItems) {
-        _cpPassed = _cpCorrect >= _cpPassMark;
-        if (_cpPassed) _confirmed[_cpSubSkill!] = _cpRung; // advance the gate
-        _cpFinished = true;
-        cpJustFinished = true;
+    // ── Confirmation window ────────────────────────────────────────────
+    // servedRung is always confirmed+1 (both _targetRung and the fixed-queue
+    // branch derive it that way) until this advances the gate, so this is
+    // just "the next _cpItems answers once mastery first shows" — no extra
+    // item is inserted and no separate state is shown; whichever of the
+    // student's own next questions land at this rung silently count.
+    Map<String, Object>? finishedCheckpoint;
+    if (m.masteredRung() >= servedRung && (_confirmed[code] ?? 0) < servedRung) {
+      if (_cpWindowRung[code] != servedRung) {
+        _cpWindowRung[code] = servedRung;
+        _cpWindowDone[code] = 0;
+        _cpWindowCorrect[code] = 0;
+        _cpWindowPreAbility[code] = m.ability;
       }
-    } else {
-      // Trigger a checkpoint once ability first reaches the target rung.
-      final servedRung = _focus!.rungNumber;
-      if (m.masteredRung() >= servedRung &&
-          (_confirmed[m.subSkillCode] ?? 0) < servedRung) {
-        _inCheckpoint = true;
-        _cpFinished = false;
-        _cpRung = servedRung;
-        _cpSubSkill = m.subSkillCode;
-        _cpPreAbility = m.ability;
-        _cpDone = 0;
-        _cpCorrect = 0;
+      _cpWindowDone[code] = (_cpWindowDone[code] ?? 0) + 1;
+      if (correct) _cpWindowCorrect[code] = (_cpWindowCorrect[code] ?? 0) + 1;
+      if (_cpWindowDone[code]! >= _cpItems) {
+        final passed = _cpWindowCorrect[code]! >= _cpPassMark;
+        if (passed) _confirmed[code] = servedRung; // advance the gate
+        finishedCheckpoint = {
+          'rung': servedRung,
+          'preAbility': _cpWindowPreAbility[code] ?? m.ability,
+          'passed': passed,
+        };
+        // Closed either way — a fresh window opens next time mastery is
+        // (re)detected, whatever rung is being served then.
+        _cpWindowRung.remove(code);
+        _cpWindowDone.remove(code);
+        _cpWindowCorrect.remove(code);
+        _cpWindowPreAbility.remove(code);
       }
     }
 
     setState(() => _answered = true);
 
+    // Start fetching the next item now, while the feedback panel is up —
+    // ability/confirmed are already updated above, so the decision it makes
+    // matches what _next() would decide once the student taps Next anyway.
+    _prefetchNext();
+
     // Persist (awaited for correctness).
     await _svc.saveMastery(m);
     await _svc.logAttempt(
-      subSkillCode: _focus!.subSkillCode,
-      rung: _focus!.rungNumber,
+      subSkillCode: code,
+      rung: servedRung,
       format: _item!['format'] as String,
       itemDifficulty: _focus!.targetDifficulty,
       correct: correct,
       response: response,
+      question: _item!['question'] as String?,
     );
-    if (cpJustFinished) {
+    if (finishedCheckpoint != null) {
       await _svc.saveCheckpoint(
-        subSkillCode: _cpSubSkill!,
-        rung: _cpRung,
-        preAbility: _cpPreAbility,
+        subSkillCode: code,
+        rung: finishedCheckpoint['rung'] as int,
+        preAbility: finishedCheckpoint['preAbility'] as double,
         postAbility: m.ability,
-        passed: _cpPassed,
+        passed: finishedCheckpoint['passed'] as bool,
       );
     }
   }
 
-  /// Advances after an answer: exits a finished checkpoint, then serves next.
-  void _advance() {
-    if (_cpFinished) {
-      _inCheckpoint = false;
-      _cpFinished = false;
-    }
-    _next();
-  }
+  /// Advances after an answer. Kept as its own method (rather than calling
+  /// _next directly from every button) purely so callers read the same way
+  /// regardless of what — if anything — happens between an answer and the
+  /// next question.
+  void _advance() => _next();
 
   /// Fixed-queue mode only: the queue is exhausted — show ResultScreen with
   /// this session's own totals rather than fetching another item.
   void _finishQueueSession() {
+    widget.onSessionComplete?.call(_sessionAnswered, _sessionCorrect);
+    if (widget.skipResultScreen) {
+      Navigator.of(context).pop();
+      return;
+    }
     final score = _sessionAnswered == 0
         ? 0
         : ((_sessionCorrect / _sessionAnswered) * 100).round();
@@ -458,7 +610,6 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         .map((q) => _codeToName[q.subSkillCode] ?? q.subSkillCode)
         .toSet()
         .join(', ');
-    widget.onSessionComplete?.call(_sessionAnswered, _sessionCorrect);
     Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => ResultScreen(
         moduleName: widget.resultModuleName ?? 'Practice',
@@ -606,9 +757,11 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
           children: [
             if (_focus != null) _topicHeader(),
             const SizedBox(height: 40),
-            const Center(child: CircularProgressIndicator()),
-            const SizedBox(height: 12),
-            const Center(child: Text('Generating your question…')),
+            GeneratingStatus(
+              color: _accent,
+              label: 'Generating your question…',
+              estimate: 'about 5-10 seconds',
+            ),
           ],
         ),
       );
@@ -625,7 +778,6 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         children: [
           _topicHeader(),
           const SizedBox(height: 16),
-          if (_inCheckpoint) _checkpointBanner(),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -635,12 +787,13 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
                   Text(item['question'] as String,
                       style: const TextStyle(fontSize: 16)),
                   const SizedBox(height: 16),
-                  if (isChoice)
+                  if (isChoice) ...[
+                    _choiceExtras(),
                     ...(item['options'] as Map)
                         .cast<String, dynamic>()
                         .entries
-                        .map((e) => _optionTile(e.key, e.value as String))
-                  else
+                        .map((e) => _optionTile(e.key, e.value as String)),
+                  ] else
                     _openAnswerField(),
                 ],
               ),
@@ -698,11 +851,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
               style: ElevatedButton.styleFrom(
                   backgroundColor: _navy, foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: Text(_cpFinished
-                  ? 'Continue'
-                  : _inCheckpoint
-                      ? 'Next checkpoint item ($_cpDone/$_cpItems)'
-                      : 'Next question'),
+              child: const Text('Next question'),
             ),
           ],
         ],
@@ -710,10 +859,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     );
   }
 
-  // ── Module-style skin (Grammar/Writing topic-picker modules) ──────────────
-  // Mirrors VocabularyQuizScreen's look — progress-bar header, filled colored
-  // option tiles — while reusing the exact same engine methods above
-  // (_submit, _selfAssess, _advance, _gradeAndPersist, checkpoint state).
+  // ── Module-style skin (Grammar/Vocabulary/Writing topic/mode pickers) ─────
+  // Progress-bar header, filled colored option tiles — while reusing the
+  // exact same engine methods above (_submit, _selfAssess, _advance,
+  // _gradeAndPersist, checkpoint state) regardless of which module got here.
 
   PreferredSizeWidget _moduleAppBar() {
     final total = _flatQueue.length;
@@ -746,6 +895,59 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         ],
       ),
       centerTitle: true,
+      actions: [
+        if (widget.contextPassage != null)
+          IconButton(
+            icon: Icon(Icons.article_outlined, color: _accent),
+            tooltip: 'Read passage again',
+            onPressed: _showPassage,
+          ),
+      ],
+    );
+  }
+
+  /// Reading only: reopen the session's passage in a scrollable sheet so the
+  /// student can reread it mid-quiz without losing their place in the queue.
+  void _showPassage() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.85,
+        builder: (_, controller) => Container(
+          padding: const EdgeInsets.all(20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                Icon(Icons.article_outlined, color: _accent),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('Passage',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ]),
+              const Divider(),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: controller,
+                  child: Text(widget.contextPassage ?? '',
+                      style: const TextStyle(fontSize: 15, height: 1.7)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -767,8 +969,26 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             style: const TextStyle(fontSize: 13, color: _moduleTextMid),
             textAlign: TextAlign.center,
           ),
+          // Reading's KBAT slice (mcq_inference) — flag it so the student
+          // knows to think rather than just re-read, same as the old design.
+          if (item['format'] == 'mcq_inference') ...[
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.purple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text('🧠 Thinking question',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.purple)),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
-          if (_inCheckpoint) _checkpointBanner(),
           Text(
             item['question'] as String? ?? '',
             style: const TextStyle(
@@ -779,10 +999,11 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
-          if (isChoice)
+          if (isChoice) ...[
+            _choiceExtras(),
             ...options.entries
-                .map((e) => _moduleOptionTile(e.key, e.value.toString(), correct))
-          else
+                .map((e) => _moduleOptionTile(e.key, e.value.toString(), correct)),
+          ] else
             _openAnswerField(),
           if (!_answered)
             Align(
@@ -848,11 +1069,7 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
                     RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               child: Text(
-                _cpFinished
-                    ? 'Continue'
-                    : _inCheckpoint
-                        ? 'Next checkpoint item ($_cpDone/$_cpItems)'
-                        : (pos < total ? 'Next question' : 'See my result'),
+                pos < total ? 'Next question' : 'See my result',
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
@@ -914,6 +1131,81 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
 
   bool _canSubmit(bool isChoice) =>
       isChoice ? _selected != null : _answerCtrl.text.trim().isNotEmpty;
+
+  /// Choice-item extras rendered between the question (the short
+  /// instruction) and the answer options — each part gets its own line
+  /// instead of being crammed into one paragraph:
+  ///  1. an image, if this item has one (`vocab_image_mcq`).
+  ///  2. a word-bank chip row, if this item has one
+  ///     (`cloze_sentence_wordbank`) — the SAME 4 words as the options
+  ///     below, just shown as a reference row before the sentence.
+  ///  3. the context sentence, if this item has one (`vocab_context_mcq`,
+  ///     `cloze_sentence_wordbank`) — the actual sentence-with-blank, kept
+  ///     separate from the instruction above it.
+  /// Every other skill's choice formats carry none of these fields, so this
+  /// is a no-op for them.
+  Widget _choiceExtras() {
+    final imageB64 = _item?['image_b64'] as String?;
+    final contextText = _item?['context_text'] as String?;
+    final wordBank = (_item?['word_bank'] as List?)?.cast<dynamic>();
+    if (imageB64 == null && contextText == null && (wordBank == null || wordBank.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (imageB64 != null) ...[
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                base64Decode(imageB64),
+                width: 160,
+                height: 160,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) =>
+                    const Icon(Icons.image_not_supported_outlined, size: 40),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (wordBank != null && wordBank.isNotEmpty) ...[
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: wordBank.map((w) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: _accent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _accent.withValues(alpha: 0.3)),
+              ),
+              child: Text(w.toString(),
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700, color: _accent)),
+            )).toList(),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (contextText != null) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _accent.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _accent.withValues(alpha: 0.2)),
+            ),
+            child: Text(contextText,
+                style: const TextStyle(
+                    fontSize: 15, fontStyle: FontStyle.italic, height: 1.5)),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
 
   Widget _openAnswerField() {
     final imageB64 = _item?['image_b64'] as String?;
@@ -1011,41 +1303,6 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     ]);
   }
 
-  Widget _checkpointBanner() {
-    final color = _cpFinished
-        ? (_cpPassed ? Colors.green : Colors.red)
-        : const Color(0xFF6A1B9A);
-    final text = _cpFinished
-        ? (_cpPassed
-            ? 'Checkpoint passed — level $_cpRung confirmed! ($_cpCorrect/$_cpItems)'
-            : 'Checkpoint not passed — keep practising level $_cpRung '
-                '($_cpCorrect/$_cpItems)')
-        : 'Checkpoint: prove level $_cpRung   ·   $_cpDone/$_cpItems answered';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Row(children: [
-        Icon(
-            _cpFinished
-                ? (_cpPassed ? Icons.verified : Icons.refresh)
-                : Icons.flag,
-            size: 18,
-            color: color),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(text,
-              style: TextStyle(
-                  fontWeight: FontWeight.w700, color: color, fontSize: 13)),
-        ),
-      ]),
-    );
-  }
-
   /// Shown for open items after Submit, before the student self-assesses —
   /// no correct/incorrect verdict yet, just the model's own answer.
   Widget _revealAnswer() {
@@ -1113,6 +1370,29 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             const SizedBox(height: 6),
             Text(_item!['explanation'].toString(),
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+          ],
+          // Vocabulary's vocab_context_mcq/vocab_synonyms_mcq: a per-option
+          // breakdown alongside the plain explanation above, not instead of it.
+          if (_item?['explanation_breakdown'] is List &&
+              (_item!['explanation_breakdown'] as List).isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ...(_item!['explanation_breakdown'] as List).map((entry) {
+              final map = entry as Map;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: RichText(
+                  text: TextSpan(
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                    children: [
+                      TextSpan(
+                          text: '${map['label']} — ',
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      TextSpan(text: map['note']?.toString() ?? ''),
+                    ],
+                  ),
+                ),
+              );
+            }),
           ],
         ],
       ),
