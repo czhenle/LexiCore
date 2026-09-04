@@ -148,19 +148,26 @@ class _EssayWritingScreenState extends State<EssayWritingScreen> {
     }
   }
 
-  void _chooseTyped() {
-    setState(() => _writeOnPaper = false);
-    _startTimer();
+  void _chooseTyped() => _chooseMode(paper: false);
+  void _chooseWriteOnPaper() => _chooseMode(paper: true);
+
+  /// Picks (or switches) the submission method. Deliberately does NOT touch
+  /// `_item`, `_answerCtrl`'s draft text, or `_photo` — this used to be the
+  /// only way to move between typing and paper, but going through it a
+  /// second time (student picked one, then wanted to switch) reset
+  /// `_writeOnPaper` from a fresh initState, which re-ran `_load()` and
+  /// silently handed back a BRAND NEW prompt, discarding whatever they'd
+  /// already written. Switching now happens in-place instead — see
+  /// `_switchMethodLink` in both flows below — so this only ever needs to
+  /// change which UI is shown, never regenerate anything.
+  void _chooseMode({required bool paper}) {
+    setState(() => _writeOnPaper = paper);
+    // Same time limit however they submit, and it should keep counting
+    // down across a switch, not hand out a fresh clock every time — only
+    // start it the first time a method is chosen.
+    if (_timer == null) _startTimer();
   }
 
-  void _chooseWriteOnPaper() {
-    setState(() => _writeOnPaper = true);
-    _startTimer();
-  }
-
-  /// The time given is the same whichever way the student submits — paper
-  /// or typed — so it starts the moment either is chosen, not just for
-  /// paper.
   void _startTimer() {
     setState(() => _secondsLeft = _timeLimitForStandard * 60);
     _timer?.cancel();
@@ -176,6 +183,21 @@ class _EssayWritingScreenState extends State<EssayWritingScreen> {
       setState(() => _secondsLeft--);
     });
   }
+
+  /// Lets the student change their mind about HOW to submit without losing
+  /// their prompt, timer, or (for the typed flow) whatever they've already
+  /// written — just swaps which flow is shown.
+  Widget _switchMethodLink() => Center(
+        child: TextButton.icon(
+          onPressed: () => setState(() => _writeOnPaper = !(_writeOnPaper ?? false)),
+          icon: Icon(_writeOnPaper == true ? Icons.keyboard_rounded : Icons.edit_note_rounded,
+              size: 18, color: _writingColor),
+          label: Text(
+            _writeOnPaper == true ? 'Switch to typing instead' : 'Switch to writing on paper instead',
+            style: TextStyle(color: _writingColor, fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+        ),
+      );
 
   Future<void> _takePhoto() async {
     final photo = await _picker.pickImage(source: ImageSource.camera, imageQuality: 75);
@@ -485,6 +507,8 @@ class _EssayWritingScreenState extends State<EssayWritingScreen> {
                 color: _secondsLeft > 0 ? _writingColor : Colors.grey.shade500),
           ),
         ),
+        const SizedBox(height: 4),
+        _switchMethodLink(),
         const SizedBox(height: 8),
         TextField(
           controller: _answerCtrl,
@@ -546,7 +570,9 @@ class _EssayWritingScreenState extends State<EssayWritingScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _promptCard(),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
+        _switchMethodLink(),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(

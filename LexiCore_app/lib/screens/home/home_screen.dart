@@ -630,15 +630,17 @@ class _HomeScreenState extends State<HomeScreen> {
       // the pre-assessment) and orchestrates the quiz + any Writing task —
       // see its doc comment. onCompleted only fires if the WHOLE thing was
       // genuinely finished, not on an early exit from any of its steps.
-      var completed = false;
+      //
+      // markTodayTaskComplete() is called FROM the callback itself, not
+      // after this await resolves — see the doc comment on the Reading
+      // branch below for why that distinction is the actual fix for a real
+      // bug (the write used to lose a race against Home rebuilding).
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => WeeklyAssessmentScreen(onCompleted: () => completed = true),
+          builder: (_) => WeeklyAssessmentScreen(onCompleted: () => _mastery.markTodayTaskComplete()),
         ),
       );
-      if (!completed) return;
-      await _mastery.markTodayTaskComplete();
       if (mounted) _loadData();
       return;
     }
@@ -651,16 +653,27 @@ class _HomeScreenState extends State<HomeScreen> {
     // adaptive loop below has no passage to ground questions in. Pushed
     // directly (not via _startMission) so onCompleted can gate the
     // completion tick on genuinely finishing the question set.
+    //
+    // markTodayTaskComplete() fires FROM inside onCompleted, the instant
+    // completion is detected — not after this `await Navigator.push`
+    // resolves. That used to be a real bug: the module's own ResultScreen
+    // ends with a "Back to home" button that does
+    // `pushAndRemoveUntil(HomeScreen, (route) => false)`, which force-
+    // removes THIS Home screen (the one running this very function) from
+    // the stack. The code after the await still technically ran, but it
+    // was racing a brand-new HomeScreen's own _loadData() (triggered by
+    // being freshly pushed) — which usually read the schedule before the
+    // completion write had landed, so the task showed as still incomplete
+    // right after finishing it. Starting the write the moment
+    // onCompleted fires — well before the student even reaches "Back to
+    // home" — removes the race entirely.
     if (skill == 'Reading') {
-      var completed = false;
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ReadingModuleScreen(onCompleted: () => completed = true),
+          builder: (_) => ReadingModuleScreen(onCompleted: () => _mastery.markTodayTaskComplete()),
         ),
       );
-      if (!completed) return;
-      await _mastery.markTodayTaskComplete();
       if (mounted) _loadData();
       return;
     }
@@ -676,18 +689,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (skill == 'Writing') {
       final mode = subSkillCode == 'writing.mode_free' ? 'free' : 'guided';
       if (!mounted) return;
-      var completed = false;
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => EssayWritingScreen(
             mode: mode,
-            onCompleted: () => completed = true,
+            onCompleted: () => _mastery.markTodayTaskComplete(),
           ),
         ),
       );
-      if (!completed) return;
-      await _mastery.markTodayTaskComplete();
       if (mounted) _loadData();
       return;
     }
@@ -720,12 +730,19 @@ class _HomeScreenState extends State<HomeScreen> {
           // bar, card layout) — only the targeting (one weak sub-skill,
           // adaptive rung) differs from picking a topic yourself.
           moduleStyle: true,
-          onSessionComplete: (answered, correct) => completed = true,
+          // Fires markTodayTaskComplete() immediately, from inside the
+          // callback — not after this await resolves — for the same
+          // pushAndRemoveUntil race-condition reason documented on the
+          // Reading branch above. `completed` is kept too, only to gate
+          // the snackbar below on a genuine finish.
+          onSessionComplete: (answered, correct) {
+            completed = true;
+            _mastery.markTodayTaskComplete();
+          },
         ),
       ),
     );
     if (!completed) return;
-    await _mastery.markTodayTaskComplete();
     if (mounted) {
       // Today's Task deliberately only claims part of the declared study
       // budget (see recommendedQueueCount's doc comment) — nudge the

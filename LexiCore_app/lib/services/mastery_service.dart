@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/learner_model.dart';
+import 'api_service.dart';
 
 /// Persistence for the adaptive practice loop: loads the learner-model state,
 /// saves ability updates, logs attempts, and exposes the taxonomy. Kept
@@ -540,14 +541,16 @@ class MasteryService {
     }
 
     final weakest = skills[0];
-    final planGoal = weakestFocusName != null
+    var planGoal = weakestFocusName != null
         ? 'Your $durationDays-day goal: improve your $weakest — focus on $weakestFocusName.'
         : 'Your $durationDays-day goal: improve your $weakest.';
 
-    // One card per 7-day cycle — template-built (not another LLM call), so
-    // it always reads correctly and matches exactly what's actually
-    // scheduled that week, rather than risking the kind of formatting
-    // issues a generated paragraph can have.
+    // One card per 7-day cycle — template-built to start with, so it always
+    // reads correctly and matches exactly what's actually scheduled that
+    // week regardless of what happens below. The wording may then get a
+    // best-effort AI rewrite (see ApiService().personalizeSchedule below);
+    // the WEEK'S CONTENT (focus skill, sub-skills touched) is decided here
+    // and only here, never by the AI pass.
     final weekCount = (durationDays / 7).ceil();
     final weeks = [
       for (var w = 0; w < weekCount; w++)
@@ -559,6 +562,61 @@ class MasteryService {
               w + 1, weakest, (subSkillsByCycle[w] ?? const <String>{}).toList()),
         },
     ];
+
+    // Best-effort AI wording pass: LexiCore's own logic above has already
+    // decided EVERYTHING that matters (which skill/sub-skill lands on which
+    // day, week boundaries, assessment/rest placement) — this call only
+    // rewrites the task_label/milestone/plan_goal TEXT into warmer wording
+    // for the child's Standard. Every template string computed above is a
+    // complete, correct plan on its own, so any failure/timeout here just
+    // leaves them exactly as they are — never blocks or corrupts the plan.
+    try {
+      final taskDays = days.where((d) => d['type'] == null).toList();
+      final personalized = await ApiService().personalizeSchedule(
+        standard: standard,
+        weakestSkill: weakest,
+        planGoalTemplate: planGoal,
+        days: [
+          for (final d in taskDays)
+            {
+              'date': d['date'],
+              'skill': d['skill'],
+              'sub_skill_name': codeToName[d['sub_skill_code']] ?? d['skill'],
+              'template': d['task_label'],
+            },
+        ],
+        weeks: [
+          for (final w in weeks)
+            {
+              'week_number': w['week_number'],
+              'focus_skill': w['focus_skill'],
+              'sub_skills_touched': w['sub_skills_touched'],
+              'template': w['milestone'],
+            },
+        ],
+      );
+      if (personalized != null) {
+        final dayLabels =
+            (personalized['day_labels'] as Map?)?.cast<String, dynamic>() ?? {};
+        for (final d in taskDays) {
+          final label = dayLabels[d['date']];
+          if (label is String && label.trim().isNotEmpty) d['task_label'] = label;
+        }
+        final weekMilestones =
+            (personalized['week_milestones'] as Map?)?.cast<String, dynamic>() ?? {};
+        for (final w in weeks) {
+          final milestone = weekMilestones['${w['week_number']}'];
+          if (milestone is String && milestone.trim().isNotEmpty) {
+            w['milestone'] = milestone;
+          }
+        }
+        final goal = personalized['plan_goal'];
+        if (goal is String && goal.trim().isNotEmpty) planGoal = goal;
+      }
+    } catch (e) {
+      debugPrint('Schedule wording personalization skipped: $e');
+      // days/weeks/planGoal are untouched — the template plan above stands.
+    }
 
     final plan = {
       'plan_start': _iso(planStart),

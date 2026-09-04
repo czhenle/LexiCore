@@ -1,4 +1,5 @@
 import OpenAI from "npm:openai";
+import { standardSyllabus } from "../_shared/syllabus.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,11 +97,18 @@ You are a GUIDE, not an answer machine.`;
 - Prefer ONE guiding question at a time; wait for their reply before the next hint.
 - Never write a full essay or draft for them — help them plan instead.`;
 
-    const profile = `STUDENT PROFILE (use to set difficulty — do NOT claim to follow any official syllabus):
-- School standard: ${standard}
+    // Ground difficulty in the real Malaysian primary syllabus for this
+    // Standard, not just raw score numbers.
+    const syllabus = standardSyllabus(Number(standard) || 3);
+    const profile = `STUDENT PROFILE (use to set difficulty, grounded in the real Malaysian primary English syllabus for this Standard):
+- School standard: ${standard} (CEFR target: ${syllabus.cefr})
 - Weakest skill: ${weakness}
 - Scores — Vocabulary ${vocab_score}/100, Grammar ${grammar_score}/100, Reading ${reading_score}/100, Writing ${writing_score}/100
-Match your difficulty to this level and give extra support in ${weakness}.`;
+- Vocabulary level expected at this standard: ${syllabus.vocabulary}
+- Grammar allowed up to this standard: ${syllabus.allowedGrammar}
+- Reading complexity expected: ${syllabus.reading.complexity}
+- Writing complexity expected: ${syllabus.writing.complexity} (roughly ${syllabus.writing.minWords}+ words if you ask them to write something)
+Match your difficulty to this syllabus level and give extra support in ${weakness}.`;
 
     const lesson = (topic || learningObjective)
       ? `LESSON CONTEXT: topic="${topic}", objective="${learningObjective}". Keep help relevant to this.`
@@ -124,10 +132,11 @@ Match your difficulty to this level and give extra support in ${weakness}.`;
 - practice_question: {"type","question","hint"}
 - study_advice: {"type","text","tips":["...","..."]}
 - simple_answer: {"type","text"}
-Keep every field short and simple.`;
+Keep every field short and simple. If (and only if) a photo was sent this turn, also include "detected_task" and "image_summary" fields (see below) alongside whichever type's own fields above.`;
 
     const imagePrompt = imageDataUrl
-      ? `The student sent a PHOTO. Work out what it is (worksheet, textbook page, handwritten answer, essay, grammar exercise, reading passage, or multiple-choice question) and add a "detected_task" field with that label. If it is their own writing use writing_feedback; if it is a question/exercise use guiding_hint. Never give the completed answer.`
+      ? `The student sent a PHOTO. Work out what it is (worksheet, textbook page, handwritten answer, essay, grammar exercise, reading passage, or multiple-choice question) and add a "detected_task" field with that label. If it is their own writing use writing_feedback; if it is a question/exercise use guiding_hint. Never give the completed answer.
+Also ALWAYS add an "image_summary" field: 2-3 short factual sentences describing exactly what's actually IN the photo — the specific questions/text/numbers visible, not just the category. The photo itself will NOT be shown to you again on later turns, only this summary — so write it as your one chance to remember what the student is working on for the rest of this conversation.`
       : "";
 
     const instructions = [BASE, rules, profile, lesson, style, safety, modePrompt(mode), schema, imagePrompt]
@@ -159,7 +168,7 @@ Keep every field short and simple.`;
     const input = [...historyInput, { role: "user", content: userContent }];
 
     const response = await openai.responses.create({
-      model: "gpt-5.6-luna",
+      model: "gpt-5.6-terra",
       instructions,
       input: input as any,
       reasoning: { effort: "low" },

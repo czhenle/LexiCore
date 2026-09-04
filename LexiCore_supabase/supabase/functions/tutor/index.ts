@@ -21,7 +21,7 @@ function json(data: unknown, status = 200) {
   });
 }
 
-const MODEL = "gpt-5.6-luna";
+const MODEL = "gpt-5.6-terra";
 
 // After this many hint requests on the SAME question, the tutor is allowed
 // to stop scaffolding and just give the answer — a real child who has
@@ -106,7 +106,7 @@ The correct answer is "${trueAnswer}".` +
     ];
 
     const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY") });
-    // gpt-5.6-luna is a reasoning model: `temperature` is rejected, and the
+    // gpt-5.6-terra is a reasoning model: `temperature` is rejected, and the
     // old `max_tokens: 120` cap would be consumed by reasoning tokens before
     // any hint text was produced — yielding an empty reply. The "under 40
     // words" rule in SYSTEM keeps replies short instead. Low reasoning

@@ -160,17 +160,52 @@ class _TopicPickerScreenState extends State<TopicPickerScreen> {
     }
   }
 
+  /// A whole-batch session (this screen) resolves ONE rung/format for a
+  /// topic's entire slice up front (see MasteryService.batchGenerateQueue's
+  /// own doc comment on that trade-off) — and since a topic starts back at
+  /// confirmed rung 0 every time it hasn't been specifically built up, that
+  /// one format is very often rung 1's, which for Grammar (and most skills)
+  /// is a choice format. Across many topics tried once each, or the same
+  /// topic revisited before its confirmation window resolves, a student
+  /// could go a long time only ever seeing MCQ — confirmed by a direct
+  /// report. Splitting each topic's count into a choice slice (the ladder's
+  /// easiest recognition format) and an open slice (the ladder's production
+  /// format) — the same 60/40 mix already used for the Weekly Assessment's
+  /// review questions — fixes it directly: every topic session includes
+  /// real open-response practice regardless of where confirmed progress
+  /// happens to sit. This module is explicitly the "broad practice" area
+  /// (Today's Task is the narrow adaptive pick), so trading strict rung-
+  /// gating for guaranteed format variety fits its own purpose.
+  Future<List<PracticeQueueItem>> _mixedSlices(String code, int count) async {
+    if (count <= 1) return [PracticeQueueItem(code, count)];
+    final dbFormats = await _svc.rungFormats();
+    String formatFor(int rungNo) {
+      final fromDb = dbFormats[widget.skill]?[rungNo];
+      if (fromDb != null) return fromDb;
+      final list = rungFormatFallback[widget.skill] ?? rungFormatFallback['Grammar']!;
+      return list[(rungNo - 1).clamp(0, 4)];
+    }
+
+    final openCount = (count * 0.4).floor().clamp(1, count - 1);
+    return [
+      PracticeQueueItem(code, count - openCount, format: formatFor(1)),
+      PracticeQueueItem(code, openCount, format: formatFor(5)),
+    ];
+  }
+
   Future<void> _start() async {
-    final List<PracticeQueueItem> queue;
+    final List<PracticeQueueItem> queue = [];
     if (_selectedTopicCode != null) {
-      queue = [PracticeQueueItem(_selectedTopicCode!, kSingleTopicQuestions)];
+      queue.addAll(await _mixedSlices(_selectedTopicCode!, kSingleTopicQuestions));
     } else {
       final groupTopics = _groups
           .firstWhere((e) => e.key == _selectedArea)
           .value
           .map((t) => t['code'] as String)
           .toList();
-      queue = distributeQuestions(groupTopics, kWholeAreaQuestions);
+      for (final slice in distributeQuestions(groupTopics, kWholeAreaQuestions)) {
+        queue.addAll(await _mixedSlices(slice.subSkillCode, slice.count));
+      }
     }
 
     setState(() => _starting = true);

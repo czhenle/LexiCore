@@ -161,11 +161,15 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     _scrollToBottom();
 
     final historyToSend = List<Map<String, String>>.from(_history);
-    if (text.isNotEmpty) {
-      _history.add({'role': 'user', 'text': text});
+    // Used to only record this turn when `text` was non-empty — a photo
+    // sent with no caption left NO trace of that turn at all in history,
+    // on top of the image_summary gap fixed above. Any real turn (text
+    // and/or an image) now gets an entry.
+    if (text.isNotEmpty || image != null) {
+      _history.add({'role': 'user', 'text': text.isNotEmpty ? text : '[sent a photo for help]'});
       // Fire-and-forget — the image itself isn't persisted (see
       // ChatHistoryService.append's doc comment).
-      _chatHistory.append(role: 'user', text: text);
+      _chatHistory.append(role: 'user', text: text.isNotEmpty ? text : '[sent a photo]');
     }
 
     final reply = await _apiService.chatWithLexi(
@@ -196,6 +200,13 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
   /// explanation once it's been flattened to a bare string.
   String _replyToText(Map<String, dynamic> d) {
     final parts = [
+      // image_summary/detected_task FIRST — when a photo was sent this
+      // turn, this is the model's only chance to remember what it showed;
+      // the actual image is never re-sent on later turns (see _sendMessage
+      // below), so dropping this from history was why a follow-up question
+      // a turn or two later had nothing left to go on and read as
+      // "forgetting" what the photo was about.
+      d['image_summary'], d['detected_task'],
       d['text'], d['word'], d['meaning'], d['when_to_use'], d['hint'],
       d['did_well'], d['to_improve'], d['next_step'], d['tip'],
       d['question'], d['check_question'], d['example'],

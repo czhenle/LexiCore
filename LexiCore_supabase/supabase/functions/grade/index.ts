@@ -30,7 +30,7 @@ function json(data: unknown, status = 200) {
   });
 }
 
-const MODEL = "gpt-5.6-luna";
+const MODEL = "gpt-5.6-terra";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -122,7 +122,7 @@ Respond ONLY in JSON: {"correct": boolean, "feedback": string, "word_count": num
       });
       raw = (r.output_text as string | undefined)?.trim() ?? "{}";
     } else {
-      // No temperature: gpt-5.6-luna is a reasoning model and rejects it.
+      // No temperature: gpt-5.6-terra is a reasoning model and rejects it.
       // Low reasoning effort — grading against a clear rubric doesn't need
       // deep multi-step reasoning, and this cuts latency substantially.
       const r = await openai.chat.completions.create({

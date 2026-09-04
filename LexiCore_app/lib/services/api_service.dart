@@ -160,4 +160,43 @@ class ApiService {
       };
     }
   }
+
+  // ── STUDY SCHEDULE PERSONALIZER ─────────────────────────────────────────
+  // Purely cosmetic: rewrites MasteryService's already-decided template
+  // labels/milestones into warmer wording. Never decides WHAT is scheduled.
+  // Returns null on any failure (network, timeout, bad response) — callers
+  // MUST fall back to their own template strings per item in that case, this
+  // is never allowed to block or corrupt the plan.
+  Future<Map<String, dynamic>?> personalizeSchedule({
+    required int standard,
+    required String weakestSkill,
+    required String planGoalTemplate,
+    required List<Map<String, dynamic>> days,
+    required List<Map<String, dynamic>> weeks,
+  }) async {
+    try {
+      final http.Response response = await http
+          .post(
+            Uri.parse('$supabaseUrl/schedule'),
+            headers: _headers,
+            body: jsonEncode({
+              'standard': standard,
+              'weakest_skill': weakestSkill,
+              'plan_goal_template': planGoalTemplate,
+              'days': days,
+              'weeks': weeks,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      }
+      debugPrint('Schedule personalize error [${response.statusCode}]: ${response.body}');
+      return null;
+    } catch (e) {
+      debugPrint('Schedule personalize network error: $e');
+      return null;
+    }
+  }
 }
