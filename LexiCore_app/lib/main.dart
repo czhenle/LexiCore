@@ -1,11 +1,29 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/initialization/splash_screen.dart';
 import 'theme/app_colors.dart';
 
+/// Must be a top-level (or static) function — FCM calls it in its own
+/// isolate when a push arrives while the app is backgrounded/killed. There's
+/// nothing to actually do here: FCM displays the notification itself in that
+/// state. This only needs to exist and re-initialise Firebase for that
+/// delivery path to work at all.
+@pragma('vm:entry-point')
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // On Android this reads android/app/google-services.json via the
+  // com.google.gms.google-services Gradle plugin — no firebase_options.dart
+  // needed for an Android-only setup.
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
   await Supabase.initialize(
     url: 'https://cldngeqtuyxwuvtsaocm.supabase.co',

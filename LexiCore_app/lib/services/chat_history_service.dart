@@ -30,6 +30,12 @@ class ChatHistoryService {
   /// write shouldn't interrupt the conversation the student is having right
   /// now, it just means this one turn won't be there next time they open
   /// the chat).
+  ///
+  /// For a user message with a photo, `data` carries `{'image_base64': ...}`
+  /// — reusing this same flexible field Lexi's structured replies already
+  /// use, rather than a dedicated image column, so the photo is restored
+  /// alongside the message on the next `loadRecent()` instead of only ever
+  /// living in this session's in-memory list.
   Future<void> append({
     required String role, // 'user' | 'lexi'
     String? text,

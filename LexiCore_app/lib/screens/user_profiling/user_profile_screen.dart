@@ -654,6 +654,12 @@ class _UserProfileState extends State<UserProfile> {
                       } else {
                         await NotificationService().cancelDailyReminder();
                       }
+                      // Keep the server-side reminder in step with the switch.
+                      await NotificationService().syncReminderPrefsToServer(
+                        enabled: v,
+                        hour: hour,
+                        minute: minute,
+                      );
                     },
                   ),
                 ],
@@ -675,6 +681,12 @@ class _UserProfileState extends State<UserProfile> {
                         await prefs.setInt('reminder_hour', hour);
                         await prefs.setInt('reminder_minute', minute);
                         await NotificationService().scheduleDailyReminder(
+                          hour: hour,
+                          minute: minute,
+                        );
+                        // Same new time for the server-side reminder.
+                        await NotificationService().syncReminderPrefsToServer(
+                          enabled: true,
                           hour: hour,
                           minute: minute,
                         );

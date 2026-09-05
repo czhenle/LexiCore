@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../models/learner_model.dart';
 import '../../services/supabase_service.dart';
 import '../../services/mastery_service.dart';
+import '../../services/notification_service.dart';
 import '../../widgets/lexi_nav_bar.dart';
 import 'article_screen.dart';
 import '../ai_schedule/study_schedule_screen.dart';
@@ -89,6 +90,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+    // Once per mount, not per _loadData() — that also runs after every task
+    // completion, and re-uploading unchanged reminder settings/re-registering
+    // an unchanged FCM token each time is pointless. Neither is awaited: they
+    // have nothing to do with drawing this screen. Here rather than on the
+    // splash screen because a session is guaranteed by this point, which
+    // isn't true there for a brand new sign-up.
+    NotificationService().syncSavedReminderPrefs();
+    NotificationService().initFcm();
   }
 
   /// A red dot on the bell whenever there's something worth the student's

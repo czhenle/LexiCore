@@ -92,13 +92,23 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _applyReminderPreference() async {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool('reminder_enabled') ?? true;
-    if (!enabled) {
-      await NotificationService().cancelDailyReminder();
-      return;
-    }
     final hour = prefs.getInt('reminder_hour') ?? 17;
     final minute = prefs.getInt('reminder_minute') ?? 0;
-    await NotificationService().scheduleDailyReminder(
+
+    if (enabled) {
+      await NotificationService().scheduleDailyReminder(
+        hour: hour,
+        minute: minute,
+      );
+    } else {
+      await NotificationService().cancelDailyReminder();
+    }
+
+    // Push the same settings up for the server-side reminder. No-ops when
+    // signed out; HomeScreen re-syncs once a session exists, so a fresh
+    // sign-up is covered without waiting for the next cold start.
+    await NotificationService().syncReminderPrefsToServer(
+      enabled: enabled,
       hour: hour,
       minute: minute,
     );

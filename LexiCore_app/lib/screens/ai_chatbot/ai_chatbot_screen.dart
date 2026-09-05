@@ -72,7 +72,15 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
         for (final row in restored) {
           final text = row['text'] as String?;
           if (row['role'] == 'user') {
-            _messages.add({'role': 'user', 'text': text ?? ''});
+            final userData = row['data'] is Map
+                ? Map<String, dynamic>.from(row['data'] as Map)
+                : null;
+            final imageB64 = userData?['image_base64'] as String?;
+            _messages.add({
+              'role': 'user',
+              'text': text ?? '',
+              if (imageB64 != null) 'image': imageB64,
+            });
             if (text != null && text.trim().isNotEmpty) {
               _history.add({'role': 'user', 'text': text});
             }
@@ -167,9 +175,15 @@ class _AiChatbotScreenState extends State<AiChatbotScreen> {
     // and/or an image) now gets an entry.
     if (text.isNotEmpty || image != null) {
       _history.add({'role': 'user', 'text': text.isNotEmpty ? text : '[sent a photo for help]'});
-      // Fire-and-forget — the image itself isn't persisted (see
-      // ChatHistoryService.append's doc comment).
-      _chatHistory.append(role: 'user', text: text.isNotEmpty ? text : '[sent a photo]');
+      // Fire-and-forget. The image itself is persisted too (in `data`, same
+      // field Lexi's structured replies use) so it's still there — not just
+      // a "[sent a photo]" placeholder — next time this student opens the
+      // chat, the same way a real chat app keeps attachments in history.
+      _chatHistory.append(
+        role: 'user',
+        text: text.isNotEmpty ? text : '[sent a photo]',
+        data: imageB64 != null ? {'image_base64': imageB64} : null,
+      );
     }
 
     final reply = await _apiService.chatWithLexi(

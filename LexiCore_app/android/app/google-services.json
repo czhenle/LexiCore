@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "472578879383",
+    "project_id": "lexicore-579c9",
+    "storage_bucket": "lexicore-579c9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:472578879383:android:aba7365758bf06a1659ed2",
+        "android_client_info": {
+          "package_name": "com.example.pintarlingo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAoDUxsWxYhb4pZMD4OLuYr2GKTZF3avD8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
