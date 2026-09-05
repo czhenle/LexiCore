@@ -109,14 +109,15 @@ The correct answer is "${trueAnswer}".` +
     // gpt-5.6-terra is a reasoning model: `temperature` is rejected, and the
     // old `max_tokens: 120` cap would be consumed by reasoning tokens before
     // any hint text was produced — yielding an empty reply. The "under 40
-    // words" rule in SYSTEM keeps replies short instead. Low reasoning
-    // effort — a single scaffolded nudge doesn't need deep reasoning, and
-    // this cuts latency substantially.
+    // words" rule in SYSTEM keeps replies short instead. MEDIUM reasoning
+    // effort: raised from "low" because hint quality — pitching the nudge at
+    // the right level without leaking the answer — is the whole product here,
+    // and is worth the extra latency.
     const r = await openai.chat.completions.create({
       model: MODEL,
       messages: chat,
       response_format: { type: "json_object" },
-      reasoning_effort: "low",
+      reasoning_effort: "medium",
     } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
 
     const raw = r.choices[0].message.content ?? "{}";

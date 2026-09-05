@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/learner_model.dart';
 import '../../services/mastery_service.dart';
+import '../../services/speech_service.dart';
 import '../../widgets/tutor_sheet.dart';
 import '../../widgets/generating_status.dart';
 import '../../theme/app_colors.dart';
@@ -481,6 +482,10 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
         'target_word': _item?['target_word'],
         'rung': _item?['rung'],
         'standard': _standard,
+        // Lets the grader tell a spelling item apart from every other open
+        // item: spelling is the ONE case where a spelling slip must fail,
+        // rather than being forgiven as not affecting meaning.
+        'format': _item?['format'],
       });
       final data = res.data;
       if (data is! Map || data['correct'] is! bool || data['feedback'] == null) {
@@ -651,6 +656,9 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
   @override
   void dispose() {
     _answerCtrl.dispose();
+    // Otherwise a word tapped just before leaving keeps talking over the
+    // next screen.
+    SpeechService().stop();
     super.dispose();
   }
 
@@ -1207,12 +1215,53 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
     );
   }
 
+  /// The "hear the word" control for spelling items.
+  ///
+  /// A spelling question that only shows a picture and a written clue isn't
+  /// really a spelling test — the student has to HEAR the word to spell it
+  /// back. The word itself (`answer`) is spoken but never drawn on screen,
+  /// which is the whole point. Deliberately re-tappable: a child listening
+  /// three or four times before writing is normal, not a failure.
+  Widget _hearWordButton(String word) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          children: [
+            Material(
+              color: AppColors.blue,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => SpeechService().speak(word),
+                child: const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Icon(Icons.volume_up_rounded,
+                      size: 40, color: Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Tap to hear the word',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade700)),
+          ],
+        ),
+      );
+
   Widget _openAnswerField() {
     final imageB64 = _item?['image_b64'] as String?;
     final hint = _item?['hint'] as String?;
+    // Spelling mode only: `answer` is the target word, spoken aloud rather
+    // than shown. Any other open format keeps the picture/clue layout below.
+    final spellingWord = _item?['format'] == 'vocab_spelling_open'
+        ? (_item?['answer'] as String?)
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (spellingWord != null && spellingWord.trim().isNotEmpty)
+          _hearWordButton(spellingWord),
         // Vocabulary open items only — a picture and/or clue pointing at the
         // one target word the student's sentence should use, shown BEFORE
         // they type so they know what to write about.
@@ -1338,6 +1387,13 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
 
   Widget _feedback() {
     final isChoice = _item?['is_choice'] == true;
+    // The correct option's TEXT, used to tick the right row in the per-option
+    // breakdown below. Matched on text rather than letter because a breakdown
+    // entry always carries its label, but not reliably its option letter.
+    final options = _item?['options'];
+    final correctOptionText = (isChoice && options is Map)
+        ? options[_item?['correct_answer']]?.toString()
+        : null;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1371,26 +1427,63 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             Text(_item!['explanation'].toString(),
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
           ],
-          // Vocabulary's vocab_context_mcq/vocab_synonyms_mcq: a per-option
-          // breakdown alongside the plain explanation above, not instead of it.
+          // Per-option notes. Given their own separated cards rather than
+          // stacked text lines: run together in one block they read as a wall
+          // of prose a child skims past, when the whole point is that they can
+          // find the option THEY picked and see why it was wrong.
           if (_item?['explanation_breakdown'] is List &&
               (_item!['explanation_breakdown'] as List).isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
+            Text('Let\'s look at each choice',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.grey.shade600)),
+            const SizedBox(height: 6),
             ...(_item!['explanation_breakdown'] as List).map((entry) {
               final map = entry as Map;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: RichText(
-                  text: TextSpan(
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
-                    children: [
-                      TextSpan(
-                          text: '${map['label']} — ',
-                          style: const TextStyle(fontWeight: FontWeight.w700)),
-                      TextSpan(text: map['note']?.toString() ?? ''),
-                    ],
+              final label = map['label']?.toString() ?? '';
+              final isRight = correctOptionText != null &&
+                  label.trim().toLowerCase() ==
+                      correctOptionText.trim().toLowerCase();
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isRight
+                        ? Colors.green.withValues(alpha: 0.45)
+                        : Colors.grey.withValues(alpha: 0.25),
                   ),
                 ),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(isRight ? Icons.check_circle : Icons.remove_circle_outline,
+                      size: 16,
+                      color: isRight ? Colors.green : Colors.grey.shade500),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: isRight
+                                    ? Colors.green.shade800
+                                    : Colors.grey.shade800)),
+                        const SizedBox(height: 2),
+                        Text(map['note']?.toString() ?? '',
+                            style: TextStyle(
+                                fontSize: 13,
+                                height: 1.35,
+                                color: Colors.grey.shade800)),
+                      ],
+                    ),
+                  ),
+                ]),
               );
             }),
           ],

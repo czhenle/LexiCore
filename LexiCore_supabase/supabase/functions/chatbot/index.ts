@@ -171,7 +171,7 @@ Also ALWAYS add an "image_summary" field: 2-3 short factual sentences describing
       model: "gpt-5.6-terra",
       instructions,
       input: input as any,
-      reasoning: { effort: "low" },
+      reasoning: { effort: "medium" },
       text: { format: { type: "json_object" } },
     });
 

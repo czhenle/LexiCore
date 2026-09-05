@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 /// A small "please wait" status for any screen waiting on question/passage
 /// generation. Deliberately just a spinner + a static reassurance line —
 /// earlier versions ticked up an elapsed-seconds counter, but a live number
@@ -42,6 +44,48 @@ class GeneratingStatus extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(color: color.withValues(alpha: 0.75), fontSize: 12)),
         ],
+      ),
+    );
+  }
+}
+
+/// [GeneratingStatus] wrapped in an actual dialog surface.
+///
+/// Every other screen shows the status against its own page background, so a
+/// bare [GeneratingStatus] looks right there. Inside `showDialog` there is no
+/// such background — a bare one floats the spinner and text straight onto the
+/// dimmed barrier, which reads as unstyled text pasted over the screen rather
+/// than a deliberate "working on it" state. This gives it a card to sit on.
+class GeneratingDialog extends StatelessWidget {
+  final String estimate;
+  final String label;
+
+  /// Accent for the spinner and heading. Defaults to the app's blue; pass the
+  /// module's own colour so the wait looks like part of that module.
+  final Color color;
+
+  const GeneratingDialog({
+    super.key,
+    this.estimate = 'about 10-20 seconds',
+    this.label = 'Preparing your questions…',
+    this.color = AppColors.blue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 48),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: GeneratingStatus(
+          label: label,
+          estimate: estimate,
+          // Dark-on-white here, unlike the white-on-colour used full-screen.
+          color: color,
+        ),
       ),
     );
   }

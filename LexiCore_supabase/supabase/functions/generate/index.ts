@@ -62,6 +62,28 @@ const MAX_ATTEMPTS = 3;
 const GENERATOR_EFFORT = "low";
 const VERIFIER_EFFORT = "none";
 
+// ── Explanation quality ─────────────────────────────────────────────────────
+// "explanation" used to be listed as a required key with NO guidance on what
+// belongs in it, so it came back as a one-line restatement ("Excited means
+// feeling very happy") that teaches nothing and never says why the other
+// three options were wrong — which is exactly where a child's misconception
+// actually lives. These specs are shared by the single and batch prompts so
+// the two can't drift apart.
+const choiceExplanationSpec = (standard: number | string) => `
+The feedback a student sees AFTER answering is the part that actually teaches, so do not treat it as an afterthought:
+- "explanation": 1-2 short sentences giving the RULE or reason behind the correct option, not just a restatement of it. "Use 'rode' because it already happened" teaches; "Rode is the answer" does not.
+- "explanation_breakdown": an array of EXACTLY 4 entries, one per option A-D IN ORDER, each {"option": the letter, "label": that option's own text, "note": ONE short sentence, ideally under 15 words, saying why it is right or what specific mistake it represents}. Name the actual confusion ("'rides' is for now, but 'yesterday' already happened"), never a bare verdict like "wrong" or "incorrect". A student who picked a distractor should read its note and recognise their own thinking in it.
+
+WRITE ALL OF THIS FOR A ${standard === 1 || standard === 2 ? "7-8" : "9-12"} YEAR OLD, not for a teacher:
+- Everyday words and short sentences. A child reads this alone, with nobody to translate it.
+- Avoid grammar jargon (superlative, comparative, adverb, noun phrase, past participle, subject-verb agreement). If a term is genuinely unavoidable, follow it immediately with plain words: "an adverb (a word that tells HOW something is done)".
+- Say what the word DOES, not what it is called: prefer "'most colourful' compares it with ALL the others" over "this is the superlative form".
+- Keep each note to one idea. Warm and matter-of-fact — never make a wrong choice sound silly.`;
+
+const openExplanationSpec = (standard: number | string) => `
+"explanation" is what the student reads after answering, so make it teach: 1-2 short sentences giving the RULE or reason behind the model answer, plus the mistake a child is most likely to make here — not merely a restatement of the answer itself.
+Write it for a ${standard === 1 || standard === 2 ? "7-8" : "9-12"} year old reading alone: everyday words, short sentences, and no grammar jargon (superlative, comparative, adverb, past participle) unless you immediately explain the term in plain words.`;
+
 const MODULES: Record<string, SkillModule> = {
   Vocabulary: vocabularyModule,
   Grammar: grammarModule,
@@ -102,12 +124,12 @@ function buildPrompt(p: GenParams): string {
     : "";
   const shape = isChoice(p)
     ? `Return options A-D and the correct_answer letter. Exactly ONE option is correct. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.
-"correct_answer" MUST be the option LETTER — exactly one of "A", "B", "C" or "D" — never the option's text. Example: for options {"A":"a","B":"an"} where "an" is right, correct_answer is "B", NOT "an". Do NOT include an "answer" field on a choice item.${
+"correct_answer" MUST be the option LETTER — exactly one of "A", "B", "C" or "D" — never the option's text. Example: for options {"A":"a","B":"an"} where "an" is right, correct_answer is "B", NOT "an". Do NOT include an "answer" field on a choice item.${choiceExplanationSpec(p.standard)}${
         mod.formatHint(p.format) ? ` ${mod.formatHint(p.format)}` : ""
       }`
     : `This is an OPEN-RESPONSE item: the student WRITES their own answer in a text box. There are no choices to pick from.
 Provide a model "answer" (what a good student response looks like) and an "explanation".
-You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase the question as "Which of the following…" or list A/B/C/D anywhere in the question text — the student cannot see any options.${mod.openExtra(p, syllabus)}`;
+You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase the question as "Which of the following…" or list A/B/C/D anywhere in the question text — the student cannot see any options.${openExplanationSpec(p.standard)}${mod.openExtra(p, syllabus)}`;
 
   const passageGuidance = p.context_passage
     ? `\nBase this question on the EXACT passage below — do not invent a new passage or reference anything not in it:\n"""\n${p.context_passage}\n"""`
@@ -115,7 +137,7 @@ You MUST NOT include an "options" key or a "correct_answer" key. Do not phrase t
 
   const extraKeys = mod.requiredKeysExtra(p);
   const baseKeys = isChoice(p)
-    ? ["question", "format", "options", "correct_answer", "explanation", "sub_skill", "rung"]
+    ? ["question", "format", "options", "correct_answer", "explanation", "explanation_breakdown", "sub_skill", "rung"]
     : ["question", "format", "answer", "explanation", "sub_skill", "rung"];
 
   return `You are an English item-writer for a Malaysian primary-school learner.
@@ -203,6 +225,20 @@ function validateStructure(item: Item, p: GenParams): string[] {
   if (!item.explanation) issues.push("explanation missing");
 
   if (isChoice(p)) {
+    // The per-option breakdown is the part that explains the DISTRACTORS, so
+    // a present-but-empty one is worth rejecting rather than shipping: a
+    // required-key check alone would happily accept [] or four blank notes.
+    const breakdown = item.explanation_breakdown;
+    if (!Array.isArray(breakdown) || breakdown.length !== 4) {
+      issues.push(
+        `explanation_breakdown must be an array of exactly 4 entries, one per option (got ${
+          Array.isArray(breakdown) ? breakdown.length : typeof breakdown
+        })`,
+      );
+    } else if (breakdown.some((e) => !e || !(e.note ?? "").toString().trim())) {
+      issues.push("every explanation_breakdown entry needs a non-empty note");
+    }
+
     const opts = item.options ?? {};
     const keys = Object.keys(opts);
     if (keys.length !== 4) issues.push("choice item must have exactly 4 options");
@@ -376,12 +412,12 @@ function buildBatchPrompt(p: GenParams, count: number): string {
     : "";
   const shape = isChoice(p)
     ? `Each item returns options A-D and the correct_answer letter. Exactly ONE option is correct per item. All four options must be distinct and plausible; distractors should reflect realistic mistakes, not nonsense.
-"options" MUST be a JSON object keyed by the LETTERS "A", "B", "C", "D" — e.g. {"A":"a","B":"an","C":"the","D":"some"} — NEVER by the numbers "0"/"1"/"2"/"3". "correct_answer" MUST be the option LETTER — exactly one of "A", "B", "C" or "D" — never the option's text or a number. Every item in the batch follows this same lettered shape, not just the first one. Do NOT include an "answer" key on a choice item.${
+"options" MUST be a JSON object keyed by the LETTERS "A", "B", "C", "D" — e.g. {"A":"a","B":"an","C":"the","D":"some"} — NEVER by the numbers "0"/"1"/"2"/"3". "correct_answer" MUST be the option LETTER — exactly one of "A", "B", "C" or "D" — never the option's text or a number. Every item in the batch follows this same lettered shape, not just the first one. Do NOT include an "answer" key on a choice item. EVERY item in the batch needs its own explanation and explanation_breakdown, not just the first.${choiceExplanationSpec(p.standard)}${
         mod.formatHint(p.format) ? ` ${mod.formatHint(p.format)}` : ""
       }`
     : `Each item is an OPEN-RESPONSE item: the student WRITES their own answer in a text box. There are no choices to pick from.
 Every item needs a model "answer" (what a good student response looks like) and an "explanation".
-Items MUST NOT include an "options" key or a "correct_answer" key. Do not phrase any question as "Which of the following…" or list A/B/C/D — the student cannot see any options.${mod.openExtra(p, syllabus)}`;
+Items MUST NOT include an "options" key or a "correct_answer" key. Do not phrase any question as "Which of the following…" or list A/B/C/D — the student cannot see any options.${openExplanationSpec(p.standard)}${mod.openExtra(p, syllabus)}`;
 
   const passageGuidance = p.context_passage
     ? `\nBase EVERY item on the EXACT passage below — do not invent a new passage or reference anything not in it:\n"""\n${p.context_passage}\n"""`
@@ -389,7 +425,7 @@ Items MUST NOT include an "options" key or a "correct_answer" key. Do not phrase
 
   const extraKeys = mod.requiredKeysExtra(p);
   const baseKeys = isChoice(p)
-    ? ["question", "format", "options", "correct_answer", "explanation", "sub_skill", "rung"]
+    ? ["question", "format", "options", "correct_answer", "explanation", "explanation_breakdown", "sub_skill", "rung"]
     : ["question", "format", "answer", "explanation", "sub_skill", "rung"];
 
   return `You are an English item-writer for a Malaysian primary-school learner.

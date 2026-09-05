@@ -46,9 +46,12 @@ dependencies:
   flutter_local_notifications: ^20.1.0
   timezone: ^0.10.1
   flutter_timezone: ^5.1.0
-  # FCM push (see LexiCore_supabase/PUSH_SETUP.md). Versions confirmed against
-  # pub.dev directly rather than guessed — firebase_messaging 16.6.0 itself
-  # requires firebase_core ^4.14.0, so both are pinned to that pairing.
+  # Device text-to-speech, so a spelling item can SAY the word rather than
+  # only describing it — hearing the word is the whole exercise.
+  flutter_tts: ^4.2.5
+  # FCM push. Versions confirmed against pub.dev rather than guessed —
+  # firebase_messaging 16.6.0 itself requires firebase_core ^4.14.0, so both
+  # are pinned to that pairing.
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0
 

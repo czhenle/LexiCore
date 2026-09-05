@@ -48,7 +48,16 @@ Deno.serve(async (req) => {
       standard,
       image,
       min_words,
+      format,
     } = await req.json();
+
+    // Spelling items INVERT the usual leniency. For every other open item, a
+    // spelling slip that doesn't change the meaning should be forgiven — you
+    // don't fail a child for a typo when the item is testing past tense. But
+    // when spelling IS the skill, "buterfly" is simply wrong, and the generic
+    // rubric below was passing it (confirmed live: correct:true alongside a
+    // mistakes entry spelling out the very error).
+    const isSpelling = String(format ?? "") === "vocab_spelling_open";
 
     const targetLine = target_word
       ? `\nThe student's sentence MUST correctly use the target word "${target_word}" (or an equally correct word for the same idea). If they used a different, wrong word, mark it incorrect and say what the right word was.`
@@ -80,7 +89,11 @@ A model answer looks like: "${model_answer ?? ""}"
 ${explanation ? `Why the model answer works: ${explanation}` : ""}${targetLine}
 ${wordCountLine}${essayLine}
 
-Judge whether the response correctly demonstrates "${sub_skill_name ?? "the skill"}" — minor spelling/punctuation slips that don't affect meaning should NOT fail it, but the core grammar/vocabulary/meaning point being tested must be right.
+${
+      isSpelling
+        ? `This is a SPELLING item: the student heard the word and typed how they think it is spelled. Spelling IS the skill being tested here, so "correct" is true ONLY if their spelling matches "${model_answer ?? ""}" exactly (ignoring surrounding spaces and capitalisation). A single wrong or missing letter is incorrect, however close it looks. Still be warm about it and point out exactly which letters were wrong.`
+        : `Judge whether the response correctly demonstrates "${sub_skill_name ?? "the skill"}" — minor spelling/punctuation slips that don't affect meaning should NOT fail it, but the core grammar/vocabulary/meaning point being tested must be right.`
+    }
 
 Respond ONLY in JSON: {"correct": boolean, "feedback": string, "word_count": number|null, "mistakes": string[], "model_essay": string|null}.
 - "feedback": one short (under 30 words), warm, encouraging recommendation on how to improve — reference the student's own words when useful.
@@ -117,14 +130,15 @@ Respond ONLY in JSON: {"correct": boolean, "feedback": string, "word_count": num
             ],
           },
         ] as any,
-        reasoning: { effort: "low" },
+        reasoning: { effort: "medium" },
         text: { format: { type: "json_object" } },
       });
       raw = (r.output_text as string | undefined)?.trim() ?? "{}";
     } else {
       // No temperature: gpt-5.6-terra is a reasoning model and rejects it.
-      // Low reasoning effort — grading against a clear rubric doesn't need
-      // deep multi-step reasoning, and this cuts latency substantially.
+      // MEDIUM reasoning effort: raised from "low" because marking a child's
+      // free-text answer fairly (partial credit, near-misses, the intent
+      // behind a clumsy sentence) is a judgement call, not a lookup.
       const r = await openai.chat.completions.create({
         model: MODEL,
         messages: [
@@ -134,7 +148,7 @@ Respond ONLY in JSON: {"correct": boolean, "feedback": string, "word_count": num
           },
         ],
         response_format: { type: "json_object" },
-        reasoning_effort: "low",
+        reasoning_effort: "medium",
       } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
       raw = r.choices[0].message.content ?? "{}";
     }
@@ -156,8 +170,18 @@ Respond ONLY in JSON: {"correct": boolean, "feedback": string, "word_count": num
       return json({ error: "grader produced an invalid verdict" }, 502);
     }
 
+    // Whether a word is spelled correctly is a string comparison, not a
+    // judgement call — so don't leave it to the model's discretion even with
+    // the rubric above. Anything else would let a wrong spelling raise the
+    // student's mastery score for the very skill they just got wrong.
+    let correct = verdict.correct;
+    if (isSpelling && typeof model_answer === "string" && model_answer.trim()) {
+      const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+      correct = norm(student_response) === norm(model_answer);
+    }
+
     return json({
-      correct: verdict.correct,
+      correct,
       feedback: sanitizeText(verdict.feedback),
       word_count: verdict.word_count ?? null,
       mistakes: Array.isArray(verdict.mistakes)

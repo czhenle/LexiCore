@@ -136,12 +136,10 @@ class VocabularyModuleScreen extends StatelessWidget {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(
-        child: GeneratingStatus(
-          color: Colors.white,
-          label: 'Preparing your questions…',
-          estimate: 'about 15-30 seconds',
-        ),
+      builder: (_) => GeneratingDialog(
+        color: mode.tagColor,
+        label: 'Preparing your ${mode.title} questions…',
+        estimate: 'about 15-30 seconds',
       ),
     );
 
