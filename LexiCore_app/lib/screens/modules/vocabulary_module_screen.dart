@@ -133,13 +133,28 @@ class VocabularyModuleScreen extends StatelessWidget {
     // The whole mode's session is generated upfront in 1-2 calls (one per
     // slice) instead of one call per question — see
     // MasteryService.batchGenerateQueue.
+    //
+    // vocab_context_mcq (Word in Context) measured much slower than every
+    // other mode here — its spec asks the model to verify a concrete detail
+    // genuinely rules out near-synonym distractors, real constraint
+    // satisfaction repeated per item, and (unlike every other format)
+    // batching does NOT make it cheaper: 5 items in one call costs close to
+    // 5x a single item, not the near-linear saving seen elsewhere. With 10
+    // questions split into two sequential sub-batches (generate/index.ts
+    // caps count at 5), this mode can genuinely take 1.5-4 minutes — quoted
+    // honestly here rather than a number that would be wrong by 3-8x. Worth
+    // a real fix later (smaller batch just for this format, or generating it
+    // incrementally) rather than accepted as-is.
+    final isSlowMode = mode.slices.any((s) => s.format == 'vocab_context_mcq');
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => GeneratingDialog(
         color: mode.tagColor,
         label: 'Preparing your ${mode.title} questions…',
-        estimate: 'about 15-30 seconds',
+        estimate: isSlowMode
+            ? 'about 1-2 minutes'
+            : 'about 15-30 seconds',
       ),
     );
 

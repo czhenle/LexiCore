@@ -284,11 +284,18 @@ class _EssayWritingScreenState extends State<EssayWritingScreen> {
       ),
       body: SafeArea(
         child: _loading
-            ? const Center(
+            ? Center(
                 child: GeneratingStatus(
                   color: _writingColor,
                   label: 'Preparing your writing task…',
-                  estimate: 'about 10-20 seconds',
+                  // guided_composition also runs a DALL-E image call after the
+                  // text (see writing.ts postProcess) — measured 20-48s, once
+                  // with an outright timeout, vs 5-9s for free_composition
+                  // (no image). One static number could not honestly cover
+                  // both.
+                  estimate: widget.mode == 'guided'
+                      ? 'about 20-45 seconds'
+                      : 'about 5-15 seconds',
                 ),
               )
             : _loadError != null

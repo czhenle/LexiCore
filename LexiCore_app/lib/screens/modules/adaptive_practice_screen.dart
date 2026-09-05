@@ -768,7 +768,11 @@ class _AdaptivePracticeScreenState extends State<AdaptivePracticeScreen> {
             GeneratingStatus(
               color: _accent,
               label: 'Generating your question…',
-              estimate: 'about 5-10 seconds',
+              // This screen serves any skill/format the policy picks — plain
+              // text items measured 3-9s, but a format needing a picture
+              // (open_sentence, vocab_image_*) runs an extra DALL-E call and
+              // measured up to 19s. Has to cover the slower case honestly.
+              estimate: 'about 5-20 seconds',
             ),
           ],
         ),

@@ -482,7 +482,11 @@ class _InitialAssessmentScreenState extends State<InitialAssessmentScreen> {
           const GeneratingStatus(
             color: Colors.white,
             label: 'Preparing your assessment…',
-            estimate: 'about 30-60 seconds',
+            // The vocab_context_mcq batch (one of several run in parallel via
+            // Future.wait) measured 42-115s on its own — since overall wait is
+            // whichever parallel call finishes LAST, that one call alone can
+            // make the whole assessment take up to ~2 minutes, not 30-60s.
+            estimate: 'about 1-2 minutes',
           ),
           const SizedBox(height: 8),
           Text(
