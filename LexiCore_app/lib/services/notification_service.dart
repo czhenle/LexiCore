@@ -31,6 +31,7 @@ class NotificationService {
 
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
+  bool _fcmInitialized = false;
 
   Future<void> init() async {
     if (_initialized) return;
@@ -93,6 +94,16 @@ class NotificationService {
   /// or a platform quirk should never stop the app from starting — the local
   /// reminder already works standalone and must keep working regardless.
   Future<void> initFcm() async {
+    // HomeScreen is rebuilt from scratch in several places (ResultScreen and
+    // WeeklyAssessmentScreen both finish with pushAndRemoveUntil(HomeScreen)),
+    // so its initState — and this method — runs again after every completed
+    // session. Without this guard each run would attach ANOTHER onMessage /
+    // onTokenRefresh listener, none of which are ever cancelled: duplicate
+    // token writes on refresh, and duplicate handling of every foreground
+    // push, growing for as long as the app stays open.
+    if (_fcmInitialized) return;
+    _fcmInitialized = true;
+
     try {
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission();
@@ -129,15 +140,21 @@ class NotificationService {
     }
   }
 
+  /// Registers this device's token against the CURRENT student.
+  ///
+  /// Goes through the `register_device_token` RPC rather than upserting
+  /// `device_tokens` directly: an FCM token identifies a device, not a
+  /// person, so when a second student signs in on a shared family/classroom
+  /// tablet the previous student's row has to be cleared first — otherwise
+  /// their reminder gets delivered to a screen someone else is now using.
+  /// RLS (correctly) won't let one student delete another's row, so that
+  /// cleanup lives in a security-definer function on the server.
   Future<void> _saveDeviceToken(String token) async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) return;
+    if (Supabase.instance.client.auth.currentUser?.id == null) return;
     try {
-      await Supabase.instance.client.from('device_tokens').upsert({
-        'user_id': uid,
-        'token': token,
-        'platform': Platform.isIOS ? 'ios' : 'android',
-        'updated_at': DateTime.now().toIso8601String(),
+      await Supabase.instance.client.rpc('register_device_token', params: {
+        'p_token': token,
+        'p_platform': Platform.isIOS ? 'ios' : 'android',
       });
     } catch (e) {
       debugPrint('Device token save failed: $e');

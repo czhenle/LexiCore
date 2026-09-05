@@ -22,8 +22,18 @@ void main() async {
   // On Android this reads android/app/google-services.json via the
   // com.google.gms.google-services Gradle plugin — no firebase_options.dart
   // needed for an Android-only setup.
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+  //
+  // Guarded: push is an ENHANCEMENT to the local reminder, never a
+  // requirement for the app to run. Unguarded, a bad/missing
+  // google-services.json or a device without Play Services would throw here,
+  // before runApp(), and the student would get a blank screen instead of an
+  // app — trading a working offline reminder for a total launch failure.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+  } catch (e) {
+    debugPrint('Firebase unavailable, push disabled (local reminders still work): $e');
+  }
 
   await Supabase.initialize(
     url: 'https://cldngeqtuyxwuvtsaocm.supabase.co',

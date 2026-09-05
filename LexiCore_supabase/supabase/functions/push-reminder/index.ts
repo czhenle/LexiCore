@@ -168,14 +168,11 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const auth = req.headers.get("Authorization") ?? "";
     if (auth !== `Bearer ${serviceKey}`) {
-      // Prefix only (never the full key) - enough to tell a legacy JWT
-      // ("eyJ...") from the newer sb_secret_... format apart while debugging
-      // a 403, without exposing anything actually sensitive.
-      return json({
-        error: "forbidden",
-        got_prefix: auth.replace(/^Bearer /, "").slice(0, 12) || null,
-        expected_prefix: serviceKey.slice(0, 12),
-      }, 403);
+      // Deliberately says nothing about the expected key. An earlier version
+      // echoed back a prefix of it to debug a format mismatch; that leaked
+      // secret material to anyone holding the publishable key (which ships
+      // inside the APK), so the response is now opaque.
+      return json({ error: "forbidden" }, 403);
     }
 
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
